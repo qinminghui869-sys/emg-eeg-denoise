@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EMG Viewer</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a222c;
+      --border: #2a3542;
+      --text: #e7eef7;
+      --muted: #8b9aab;
+      --accent: #3db8a8;
+      --accent-dim: #2a7f74;
+      --warn: #e0a35b;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
+    }
+    body {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 20px;
+      align-items: center;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #151c24, var(--bg));
+    }
+    header h1 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    header h1 span { color: var(--accent); }
+    .meta { color: var(--muted); font-size: 12px; }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 14px;
+      align-items: center;
+      margin-left: auto;
+    }
+    label.ctrl {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      user-select: none;
+    }
+    select, button, input[type="file"] { font: inherit; }
+    select, button {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent-dim); }
+    button.primary {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+    }
+    input[type="range"] {
+      width: 140px;
+      accent-color: var(--accent);
+    }
+    input[type="checkbox"] { accent-color: var(--accent); }
+    main {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      min-height: 0;
+    }
+    aside {
+      border-right: 1px solid var(--border);
+      background: var(--panel);
+      padding: 14px;
+      overflow: auto;
+    }
+    aside h2 {
+      margin: 0 0 10px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    .chan-list { display: grid; gap: 6px; margin-bottom: 18px; }
+    .chan-item {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 8px;
+      border-radius: 6px;
+      background: #12181f;
+      border: 1px solid transparent;
+    }
+    .chan-item.active { border-color: var(--border); }
+    .swatch { width: 10px; height: 10px; border-radius: 2px; }
+    .stats {
+      font-size: 11px;
+      color: var(--muted);
+      display: grid;
+      gap: 4px;
+    }
+    .stats strong { color: var(--text); font-weight: 500; }
+    .filter-note {
+      margin-top: 14px;
+      padding: 8px;
+      border-radius: 6px;
+      background: #12181f;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .plot-wrap {
+      position: relative;
+      min-height: 0;
+      padding: 8px 12px 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    canvas#wave {
+      width: 100%;
+      flex: 1;
+      min-height: 320px;
+      background: #0c1015;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: crosshair;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 16px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .hint { color: var(--muted); font-size: 11px; }
+    footer {
+      padding: 8px 18px 12px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .status.err { color: var(--warn); }
+    @media (max-width: 860px) {
+      main { grid-template-columns: 1fr; }
+      aside { border-right: none; border-bottom: 1px solid var(--border); max-height: 240px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>EMG <span>Viewer</span></h1>
+      <div class="meta" id="sourceMeta">加载示例数据中…</div>
+    </div>
+    <div class="controls">
+      <label class="ctrl">侧
+        <select id="sideSelect">
+          <option value="left">左手腕</option>
+          <option value="right">右手腕</option>
+          <option value="both">双侧</option>
+        </select>
+      </label>
+      <label class="ctrl">滤波
+        <select id="filterMode">
+          <option value="raw">原始</option>
+          <option value="hp">高通 20 Hz</option>
+          <option value="bp">带通 20–450 Hz</option>
+          <option value="main" selected>主链（带通 + 50 Hz 梳状）</option>
+        </select>
+      </label>
+      <label class="ctrl"><input type="checkbox" id="dcRemove" checked /> 去直流</label>
+      <label class="ctrl">窗长
+        <input type="range" id="winSec" min="0.5" max="25" step="0.5" value="5" />
+        <span id="winSecLabel">5.0 s</span>
+      </label>
+      <label class="ctrl">起点
+        <input type="range" id="tStart" min="0" max="20" step="0.05" value="0" />
+        <span id="tStartLabel">0.00 s</span>
+      </label>
+      <label class="ctrl">增益
+        <input type="range" id="gain" min="0.2" max="5" step="0.1" value="1" />
+        <span id="gainLabel">1.0×</span>
+      </label>
+      <button class="primary" id="loadSampleBtn" type="button">加载示例</button>
+      <label class="ctrl">打开文件
+        <input type="file" id="fileInput" accept=".json,.csv,application/json,text/csv" />
+      </label>
+    </div>
+  </header>
+
+  <main>
+    <aside>
+      <h2>通道</h2>
+      <div class="chan-list" id="chanList"></div>
+      <h2>当前窗口统计</h2>
+      <div class="stats" id="statsBox">—</div>
+      <div class="filter-note" id="filterNote">—</div>
+    </aside>
+    <section class="plot-wrap">
+      <div class="toolbar">
+        <span>滚轮缩放 · 拖拽平移 · 双击复位</span>
+        <span class="hint">滤波在浏览器内因果运行，对齐 emg-denoise 主链参数</span>
+      </div>
+      <canvas id="wave"></canvas>
+    </section>
+  </main>
+
+  <footer>
+    <div id="cursorInfo">光标：—</div>
+    <div class="status" id="status">就绪</div>
+  </footer>
+
+  <script>
+(() => {
+  const COLORS = [
+    "#5eb8ff", "#7ad3a8", "#f0a070", "#c9a0ff",
+    "#f2d16b", "#ff7b9c", "#6ed6e0", "#b8c4d4",
+  ];
+
+  /* ---------- DSP (Butterworth SOS + 50 Hz IIR comb) ---------- */
+  const DSP = (() => {
+    function buttap(order) {
+      const poles = [];
+      for (let m = -order + 1; m < order; m += 2) {
+        const ang = (Math.PI * m) / (2 * order);
+        poles.push({ re: -Math.cos(ang), im: -Math.sin(ang) });
+      }
+      return { z: [], p: poles, k: 1 };
+    }
+
+    function scaleZpk(zpk, wo) {
+      const p = zpk.p.map((c) => ({ re: c.re * wo, im: c.im * wo }));
+      const z = zpk.z.map((c) => ({ re: c.re * wo, im: c.im * wo }));
+      const deg = zpk.p.length - zpk.z.length;
+      return { z, p, k: zpk.k * Math.pow(wo, deg) };
+    }
+
+    function cmul(a, b) {
+      return { re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re };
+    }
+
+    function lp2hpZpk(zpk, wo) {
+      // Match scipy.signal.lp2hp_zpk: k_hp = k * real(prod(-z)/prod(-p))
+      const degree = zpk.p.length - zpk.z.length;
+      let num = { re: 1, im: 0 };
+      let den = { re: 1, im: 0 };
+      for (const c of zpk.z) num = cmul(num, { re: -c.re, im: -c.im });
+      for (const c of zpk.p) den = cmul(den, { re: -c.re, im: -c.im });
+      const dd = den.re * den.re + den.im * den.im;
+      const kr = (num.re * den.re + num.im * den.im) / dd;
+      const p = zpk.p.map((c) => {
+        const d = c.re * c.re + c.im * c.im;
+        return { re: (wo * c.re) / d, im: (-wo * c.im) / d };
+      });
+      const z = zpk.z.map((c) => {
+        const d = c.re * c.re + c.im * c.im;
+        return { re: (wo * c.re) / d, im: (-wo * c.im) / d };
+      });
+      for (let i = 0; i < degree; i++) z.push({ re: 0, im: 0 });
+      return { z, p, k: zpk.k * kr };
+    }
+
+    function bilinearZpk(zpk, fs) {
+      // Match scipy.signal.bilinear_zpk (empty prod(fs2 - z) == 1).
+      const fs2 = 2 * fs;
+      const transform = (c) => {
+        const num = { re: fs2 + c.re, im: c.im };
+        const den = { re: fs2 - c.re, im: -c.im };
+        const d = den.re * den.re + den.im * den.im;
+        return {
+          re: (num.re * den.re + num.im * den.im) / d,
+          im: (num.im * den.re - num.re * den.im) / d,
+        };
+      };
+      const zd = zpk.z.map(transform);
+      const pd = zpk.p.map(transform);
+      const rel = zpk.p.length - zpk.z.length;
+      let numG = { re: zpk.k, im: 0 };
+      let denG = { re: 1, im: 0 };
+      for (const c of zpk.z) numG = cmul(numG, { re: fs2 - c.re, im: -c.im });
+      for (const c of zpk.p) denG = cmul(denG, { re: fs2 - c.re, im: -c.im });
+      for (let i = 0; i < rel; i++) zd.push({ re: -1, im: 0 });
+      const d = denG.re * denG.re + denG.im * denG.im;
+      const kd = (numG.re * denG.re + numG.im * denG.im) / d;
+      return { z: zd, p: pd, k: kd };
+    }
+
+    function pairConjugates(arr) {
+      const used = new Array(arr.length).fill(false);
+      const pairs = [];
+      const reals = [];
+      for (let i = 0; i < arr.length; i++) {
+        if (used[i]) continue;
+        const a = arr[i];
+        if (Math.abs(a.im) < 1e-10) {
+          reals.push(a);
+          used[i] = true;
+          continue;
+        }
+        let found = -1;
+        for (let j = i + 1; j < arr.length; j++) {
+          if (used[j]) continue;
+          const b = arr[j];
+          if (Math.abs(a.re - b.re) < 1e-8 && Math.abs(a.im + b.im) < 1e-8) {
+            found = j;
+            break;
+          }
+        }
+        if (found < 0) throw new Error("conjugate pairing failed");
+        used[i] = used[found] = true;
+        pairs.push([a, arr[found]]);
+      }
+      return { pairs, reals };
+    }
+
+    function zpk2sos(zpk) {
+      const zp = pairConjugates(zpk.z);
+      const pp = pairConjugates(zpk.p);
+      const sections = [];
+      const nSec = Math.max(zp.pairs.length + Math.ceil(zp.reals.length / 2), pp.pairs.length + Math.ceil(pp.reals.length / 2), 1);
+      const zPairs = zp.pairs.slice();
+      const pPairs = pp.pairs.slice();
+      const zRe = zp.reals.slice();
+      const pRe = pp.reals.slice();
+
+      while (zPairs.length || pPairs.length || zRe.length || pRe.length) {
+        let b0 = 1, b1 = 0, b2 = 0, a0 = 1, a1 = 0, a2 = 0;
+        if (pPairs.length) {
+          const [p1, p2] = pPairs.shift();
+          // (1 - p1 z^-1)(1 - p2 z^-1)
+          a1 = -(p1.re + p2.re);
+          a2 = p1.re * p2.re - p1.im * p2.im;
+        } else if (pRe.length >= 2) {
+          const r1 = pRe.shift().re;
+          const r2 = pRe.shift().re;
+          a1 = -(r1 + r2);
+          a2 = r1 * r2;
+        } else if (pRe.length === 1) {
+          a1 = -pRe.shift().re;
+          a2 = 0;
+        }
+        if (zPairs.length) {
+          const [z1, z2] = zPairs.shift();
+          b1 = -(z1.re + z2.re);
+          b2 = z1.re * z2.re - z1.im * z2.im;
+        } else if (zRe.length >= 2) {
+          const r1 = zRe.shift().re;
+          const r2 = zRe.shift().re;
+          b1 = -(r1 + r2);
+          b2 = r1 * r2;
+        } else if (zRe.length === 1) {
+          b1 = -zRe.shift().re;
+          b2 = 0;
+        }
+        sections.push([b0, b1, b2, a0, a1, a2]);
+      }
+      // Apply overall gain to first section
+      if (!sections.length) sections.push([1, 0, 0, 1, 0, 0]);
+      sections[0][0] *= zpk.k;
+      sections[0][1] *= zpk.k;
+      sections[0][2] *= zpk.k;
+      return sections;
+    }
+
+    function butterSOS(order, cutoffHz, fs, btype) {
+      if (!(fs > 0) || !(cutoffHz > 0) || cutoffHz >= fs / 2) {
+        throw new Error(`invalid cutoff ${cutoffHz} for fs=${fs}`);
+      }
+      const warped = 2 * fs * Math.tan((Math.PI * cutoffHz) / fs);
+      let zpk = buttap(order);
+      if (btype === "lowpass") zpk = scaleZpk(zpk, warped);
+      else if (btype === "highpass") zpk = lp2hpZpk(zpk, warped);
+      else throw new Error("btype must be lowpass or highpass");
+      return zpk2sos(bilinearZpk(zpk, fs));
+    }
+
+    function sosfilt(sos, x) {
+      const y = new Float32Array(x.length);
+      const zi = sos.map(() => [0, 0]);
+      for (let n = 0; n < x.length; n++) {
+        let v = x[n];
+        for (let s = 0; s < sos.length; s++) {
+          const [b0, b1, b2, , a1, a2] = sos[s];
+          const z0 = zi[s][0];
+          const z1 = zi[s][1];
+          const out = b0 * v + z0;
+          zi[s][0] = b1 * v - a1 * out + z1;
+          zi[s][1] = b2 * v - a2 * out;
+          v = out;
+        }
+        y[n] = v;
+      }
+      return y;
+    }
+
+    function iirComb(x, fs, { f0 = 50, bandwidth = 2 } = {}) {
+      const delay = Math.max(1, Math.round(fs / f0));
+      const beta = Math.tan((Math.PI * bandwidth) / (2 * f0));
+      const r = (1 - beta) / (1 + beta);
+      const g = (1 + r) / 2;
+      const y = new Float32Array(x.length);
+      const bufX = new Float32Array(delay);
+      const bufY = new Float32Array(delay);
+      let pos = 0;
+      for (let n = 0; n < x.length; n++) {
+        const xn = x[n];
+        const xD = bufX[pos];
+        const yD = bufY[pos];
+        const yn = g * (xn - xD) + r * yD;
+        y[n] = yn;
+        bufX[pos] = xn;
+        bufY[pos] = yn;
+        pos = (pos + 1) % delay;
+      }
+      return { y, delay, g, r };
+    }
+
+    function bandpassSos(fs) {
+      const nyq = fs / 2;
+      const lp = Math.min(450, 0.9 * nyq);
+      const hp = butterSOS(2, 20, fs, "highpass");
+      const low = butterSOS(4, lp, fs, "lowpass");
+      return { sos: hp.concat(low), lpCut: lp };
+    }
+
+    function applyMode(samples, fs, mode) {
+      if (mode === "raw") {
+        return { samples: Float32Array.from(samples), note: "原始信号" };
+      }
+      if (!(fs > 40)) throw new Error("采样率过低，无法滤波");
+      if (mode === "hp") {
+        const sos = butterSOS(2, 20, fs, "highpass");
+        return {
+          samples: sosfilt(sos, samples),
+          note: `Butterworth 高通 2 阶 · 20 Hz · fs=${fs.toFixed(1)} Hz`,
+        };
+      }
+      const { sos, lpCut } = bandpassSos(fs);
+      let y = sosfilt(sos, samples);
+      if (mode === "bp") {
+        return {
+          samples: y,
+          note: `Butterworth 带通 20–${lpCut.toFixed(0)} Hz（HP2 + LP4）· fs=${fs.toFixed(1)} Hz`,
+        };
+      }
+      // main chain
+      const comb = iirComb(y, fs);
+      return {
+        samples: comb.y,
+        note: `主链：20–${lpCut.toFixed(0)} Hz 带通 + 50 Hz IIR 梳状（delay=${comb.delay}, Q≈25）· 含约 1 s 预热`,
+      };
+    }
+
+    return { applyMode, bandpassSos, butterSOS, sosfilt, iirComb };
+  })();
+
+  const state = {
+    data: null,
+    side: "left",
+    enabled: {},
+    dcRemove: true,
+    filterMode: "main",
+    winSec: 5,
+    tStart: 0,
+    gain: 1,
+    drag: null,
+    filterCache: null, // { mode, fs, sides: { left: Float32Array[], ... } }
+  };
+
+  const els = {
+    sourceMeta: document.getElementById("sourceMeta"),
+    sideSelect: document.getElementById("sideSelect"),
+    filterMode: document.getElementById("filterMode"),
+    dcRemove: document.getElementById("dcRemove"),
+    winSec: document.getElementById("winSec"),
+    winSecLabel: document.getElementById("winSecLabel"),
+    tStart: document.getElementById("tStart"),
+    tStartLabel: document.getElementById("tStartLabel"),
+    gain: document.getElementById("gain"),
+    gainLabel: document.getElementById("gainLabel"),
+    loadSampleBtn: document.getElementById("loadSampleBtn"),
+    fileInput: document.getElementById("fileInput"),
+    chanList: document.getElementById("chanList"),
+    statsBox: document.getElementById("statsBox"),
+    filterNote: document.getElementById("filterNote"),
+    cursorInfo: document.getElementById("cursorInfo"),
+    status: document.getElementById("status"),
+    canvas: document.getElementById("wave"),
+  };
+  const ctx = els.canvas.getContext("2d");
+
+  function setStatus(msg, isErr = false) {
+    els.status.textContent = msg;
+    els.status.classList.toggle("err", isErr);
+  }
+
+  function decodeF32Base64(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Float32Array(bytes.buffer);
+  }
+
+  function parseSampleJson(obj) {
+    if (obj.encoding !== "base64" || obj.dtype !== "float32") {
+      throw new Error("仅支持 encoding=base64 / dtype=float32 的示例 JSON");
+    }
+    const time = decodeF32Base64(obj.time);
+    const sides = {};
+    for (const side of ["left", "right"]) {
+      if (!obj[side]) continue;
+      sides[side] = {
+        names: obj[side].names || [],
+        channels: obj[side].channels.map(decodeF32Base64),
+        mean: obj[side].mean || [],
+        std: obj[side].std || [],
+      };
+    }
+    return {
+      source: obj.source || "uploaded",
+      source_path: obj.source_path || "",
+      fs_hz: obj.fs_hz,
+      original_fs_hz: obj.original_fs_hz,
+      duration_s: obj.duration_s ?? (time[time.length - 1] - time[0]),
+      unit: obj.unit || "",
+      time,
+      sides,
+    };
+  }
+
+  function parseCsvText(text, filename) {
+    const lines = text.trim().split(/\r?\n/);
+    if (lines.length < 2) throw new Error("CSV 为空");
+    const header = lines[0].split(",").map((s) => s.trim());
+    const tsIdx = header.findIndex((h) => /^(timestamp|time|t)$/i.test(h));
+    if (tsIdx < 0) throw new Error("CSV 需要 timestamp 列");
+    const chCols = header
+      .map((h, i) => ({ h, i }))
+      .filter(({ i, h }) => i !== tsIdx && !/^episode/i.test(h));
+    const n = lines.length - 1;
+    const time = new Float32Array(n);
+    const channels = chCols.map(() => new Float32Array(n));
+    for (let r = 0; r < n; r++) {
+      const parts = lines[r + 1].split(",");
+      time[r] = Number(parts[tsIdx]);
+      chCols.forEach((_, ci) => {
+        channels[ci][r] = Number(parts[chCols[ci].i]);
+      });
+    }
+    const t0 = time[0];
+    for (let i = 0; i < n; i++) time[i] -= t0;
+    const dt = (time[Math.min(n - 1, 100)] - time[0]) / Math.min(n - 1, 100);
+    const fs = dt > 0 ? 1 / dt : 0;
+    const sideName = /right/i.test(filename) ? "right" : "left";
+    return {
+      source: filename,
+      source_path: "",
+      fs_hz: fs,
+      original_fs_hz: fs,
+      duration_s: time[n - 1] - time[0],
+      unit: "",
+      time,
+      sides: {
+        [sideName]: {
+          names: chCols.map(({ h }, i) => h || `ch${i}`),
+          channels,
+          mean: channels.map((c) => mean(c)),
+          std: channels.map((c) => std(c)),
+        },
+      },
+    };
+  }
+
+  function mean(arr) {
+    let s = 0;
+    for (let i = 0; i < arr.length; i++) s += arr[i];
+    return s / arr.length;
+  }
+
+  function std(arr) {
+    const m = mean(arr);
+    let s = 0;
+    for (let i = 0; i < arr.length; i++) {
+      const d = arr[i] - m;
+      s += d * d;
+    }
+    return Math.sqrt(s / arr.length);
+  }
+
+  function ensureFiltered() {
+    if (!state.data) return null;
+    const fs = Number(state.data.fs_hz);
+    const mode = state.filterMode;
+    if (
+      state.filterCache &&
+      state.filterCache.mode === mode &&
+      state.filterCache.fs === fs
+    ) {
+      return state.filterCache;
+    }
+    const sides = {};
+    let note = "原始信号";
+    const t0 = performance.now();
+    for (const [side, block] of Object.entries(state.data.sides)) {
+      const channels = [];
+      const means = [];
+      const stds = [];
+      for (const raw of block.channels) {
+        const { samples, note: n } = DSP.applyMode(raw, fs, mode);
+        note = n;
+        channels.push(samples);
+        means.push(mean(samples));
+        stds.push(std(samples));
+      }
+      sides[side] = { names: block.names, channels, mean: means, std: stds };
+    }
+    state.filterCache = { mode, fs, sides, note, ms: performance.now() - t0 };
+    return state.filterCache;
+  }
+
+  function viewSides() {
+    const cached = ensureFiltered();
+    return cached ? cached.sides : state.data.sides;
+  }
+
+  function activeChannels() {
+    const out = [];
+    const sides = viewSides();
+    const order = state.side === "both" ? ["left", "right"] : [state.side];
+    for (const side of order) {
+      const block = sides?.[side];
+      if (!block) continue;
+      block.channels.forEach((samples, i) => {
+        const key = `${side}:${i}`;
+        if (state.enabled[key] === false) return;
+        out.push({
+          key,
+          side,
+          index: i,
+          name: block.names[i] || `${side[0].toUpperCase()}${i}`,
+          samples,
+          color: COLORS[i % COLORS.length],
+          mean: block.mean[i] ?? mean(samples),
+          std: block.std[i] ?? std(samples),
+        });
+      });
+    }
+    return out;
+  }
+
+  function rebuildChannelList() {
+    const chans = [];
+    const sides = viewSides();
+    const order = state.side === "both" ? ["left", "right"] : [state.side];
+    for (const side of order) {
+      const block = sides?.[side];
+      if (!block) continue;
+      block.channels.forEach((_, i) => {
+        const key = `${side}:${i}`;
+        if (!(key in state.enabled)) state.enabled[key] = true;
+        chans.push({
+          key,
+          name: block.names[i] || `${side} ${i}`,
+          color: COLORS[i % COLORS.length],
+        });
+      });
+    }
+    els.chanList.innerHTML = chans
+      .map(
+        (c) => `
+      <label class="chan-item ${state.enabled[c.key] ? "active" : ""}">
+        <input type="checkbox" data-key="${c.key}" ${state.enabled[c.key] ? "checked" : ""} />
+        <span>${c.name}</span>
+        <span class="swatch" style="background:${c.color}"></span>
+      </label>`
+      )
+      .join("");
+    els.chanList.querySelectorAll("input[type=checkbox]").forEach((box) => {
+      box.addEventListener("change", () => {
+        state.enabled[box.dataset.key] = box.checked;
+        draw();
+      });
+    });
+  }
+
+  function clampWindow() {
+    if (!state.data) return;
+    const dur = state.data.duration_s;
+    els.winSec.max = String(Math.max(0.5, dur));
+    state.winSec = Math.min(state.winSec, dur);
+    els.winSec.value = String(state.winSec);
+    const maxStart = Math.max(0, dur - state.winSec);
+    els.tStart.max = String(maxStart);
+    state.tStart = Math.min(Math.max(0, state.tStart), maxStart);
+    els.tStart.value = String(state.tStart);
+    els.winSecLabel.textContent = `${state.winSec.toFixed(1)} s`;
+    els.tStartLabel.textContent = `${state.tStart.toFixed(2)} s`;
+  }
+
+  function indexRange(t0, t1) {
+    const t = state.data.time;
+    let i0 = 0;
+    let i1 = t.length - 1;
+    while (i0 < t.length && t[i0] < t0) i0++;
+    while (i1 > 0 && t[i1] > t1) i1--;
+    i0 = Math.max(0, i0 - 1);
+    i1 = Math.min(t.length - 1, i1 + 1);
+    return [i0, i1];
+  }
+
+  function resizeCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = els.canvas.getBoundingClientRect();
+    const w = Math.max(320, Math.floor(rect.width));
+    const h = Math.max(280, Math.floor(rect.height));
+    els.canvas.width = Math.floor(w * dpr);
+    els.canvas.height = Math.floor(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { w, h };
+  }
+
+  function draw() {
+    if (!state.data) return;
+    let filterInfo = null;
+    try {
+      filterInfo = ensureFiltered();
+    } catch (err) {
+      setStatus(`滤波失败：${err.message}`, true);
+      els.filterNote.textContent = err.message;
+      return;
+    }
+    clampWindow();
+    const { w, h } = resizeCanvas();
+    const chans = activeChannels();
+    const padL = 54;
+    const padR = 16;
+    const padT = 12;
+    const padB = 28;
+    const plotW = w - padL - padR;
+    const plotH = h - padT - padB;
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#0c1015";
+    ctx.fillRect(0, 0, w, h);
+
+    if (filterInfo) {
+      els.filterNote.textContent = `${filterInfo.note} · 耗时 ${filterInfo.ms.toFixed(1)} ms`;
+    }
+
+    if (!chans.length) {
+      ctx.fillStyle = "#8b9aab";
+      ctx.fillText("请至少选择一个通道", padL, padT + 20);
+      return;
+    }
+
+    const t0 = state.tStart;
+    const t1 = state.tStart + state.winSec;
+    const [i0, i1] = indexRange(t0, t1);
+    const rowH = plotH / chans.length;
+    const t = state.data.time;
+
+    // warmup shade (~1 s) when filtering
+    if (state.filterMode !== "raw") {
+      const warmEnd = Math.min(t1, 1.0);
+      if (warmEnd > t0) {
+        const x0 = padL;
+        const x1 = padL + ((warmEnd - t0) / (t1 - t0)) * plotW;
+        ctx.fillStyle = "rgba(224, 163, 91, 0.08)";
+        ctx.fillRect(x0, padT, Math.max(0, x1 - x0), plotH);
+      }
+    }
+
+    ctx.strokeStyle = "#1c2733";
+    ctx.lineWidth = 1;
+    const nGrid = 8;
+    for (let g = 0; g <= nGrid; g++) {
+      const x = padL + (plotW * g) / nGrid;
+      ctx.beginPath();
+      ctx.moveTo(x, padT);
+      ctx.lineTo(x, padT + plotH);
+      ctx.stroke();
+    }
+
+    const stats = [];
+    chans.forEach((ch, row) => {
+      const y0 = padT + row * rowH;
+      const mid = y0 + rowH / 2;
+      ctx.strokeStyle = "#243040";
+      ctx.beginPath();
+      ctx.moveTo(padL, mid);
+      ctx.lineTo(padL + plotW, mid);
+      ctx.stroke();
+
+      let s = 0;
+      let c = 0;
+      let m = 0;
+      let mn = Infinity;
+      let mx = -Infinity;
+      const dc = state.dcRemove ? ch.mean : 0;
+      for (let i = i0; i <= i1; i++) {
+        const v = ch.samples[i] - dc;
+        m += v;
+        c++;
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+      }
+      m = c ? m / c : 0;
+      for (let i = i0; i <= i1; i++) {
+        const v = ch.samples[i] - dc - m;
+        s += v * v;
+      }
+      const sd = c > 1 ? Math.sqrt(s / (c - 1)) : 1;
+      const amp = Math.max(sd * 4, (mx - mn) * 0.35, 1) / state.gain;
+      const yScale = (rowH * 0.42) / amp;
+
+      ctx.beginPath();
+      let started = false;
+      for (let i = i0; i <= i1; i++) {
+        const x = padL + ((t[i] - t0) / (t1 - t0)) * plotW;
+        const y = mid - (ch.samples[i] - dc) * yScale;
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = ch.color;
+      ctx.lineWidth = 1.1;
+      ctx.stroke();
+
+      ctx.fillStyle = "#c5d0dc";
+      ctx.font = "12px IBM Plex Sans, sans-serif";
+      ctx.fillText(ch.name, 8, mid + 4);
+
+      stats.push(
+        `<div><strong>${ch.name}</strong> min ${mn.toFixed(0)} · max ${mx.toFixed(0)} · σ ${sd.toFixed(0)}</div>`
+      );
+    });
+
+    ctx.fillStyle = "#8b9aab";
+    ctx.font = "11px IBM Plex Sans, sans-serif";
+    for (let g = 0; g <= nGrid; g++) {
+      const tt = t0 + ((t1 - t0) * g) / nGrid;
+      const x = padL + (plotW * g) / nGrid;
+      ctx.fillText(`${tt.toFixed(2)}s`, x - 14, h - 10);
+    }
+
+    els.statsBox.innerHTML = stats.join("") || "—";
+  }
+
+  function loadData(data) {
+    state.data = data;
+    state.enabled = {};
+    state.filterCache = null;
+    state.tStart = 0;
+    state.winSec = Math.min(5, data.duration_s || 5);
+    const sides = Object.keys(data.sides);
+    state.side = sides.includes("left") ? "left" : sides[0];
+    els.sideSelect.value = state.side;
+    els.sourceMeta.textContent = [
+      data.source,
+      data.fs_hz ? `${Number(data.fs_hz).toFixed(0)} Hz` : null,
+      data.duration_s != null ? `${Number(data.duration_s).toFixed(2)} s` : null,
+      data.unit || null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    rebuildChannelList();
+    draw();
+    setStatus(`已加载 ${data.source}`);
+  }
+
+  async function loadSample() {
+    setStatus("正在加载 data/sample_emg.json …");
+    try {
+      const res = await fetch("data/sample_emg.json");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const obj = await res.json();
+      loadData(parseSampleJson(obj));
+    } catch (err) {
+      setStatus(
+        `无法自动加载示例（${err.message}）。请用本地服务打开：python3 -m http.server --directory viz 8765`,
+        true
+      );
+    }
+  }
+
+  function onFilterChange() {
+    state.filterMode = els.filterMode.value;
+    state.filterCache = null;
+    // DC remove less critical after HP/main, but keep user choice
+    draw();
+  }
+
+  els.sideSelect.addEventListener("change", () => {
+    state.side = els.sideSelect.value;
+    rebuildChannelList();
+    draw();
+  });
+  els.filterMode.addEventListener("change", onFilterChange);
+  els.dcRemove.addEventListener("change", () => {
+    state.dcRemove = els.dcRemove.checked;
+    draw();
+  });
+  els.winSec.addEventListener("input", () => {
+    state.winSec = Number(els.winSec.value);
+    draw();
+  });
+  els.tStart.addEventListener("input", () => {
+    state.tStart = Number(els.tStart.value);
+    draw();
+  });
+  els.gain.addEventListener("input", () => {
+    state.gain = Number(els.gain.value);
+    els.gainLabel.textContent = `${state.gain.toFixed(1)}×`;
+    draw();
+  });
+  els.loadSampleBtn.addEventListener("click", loadSample);
+  els.fileInput.addEventListener("change", async () => {
+    const file = els.fileInput.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      if (file.name.endsWith(".json") || text.trim().startsWith("{")) {
+        loadData(parseSampleJson(JSON.parse(text)));
+      } else {
+        loadData(parseCsvText(text, file.name));
+      }
+    } catch (err) {
+      setStatus(`文件解析失败：${err.message}`, true);
+    }
+  });
+
+  els.canvas.addEventListener("wheel", (ev) => {
+    if (!state.data) return;
+    ev.preventDefault();
+    const factor = ev.deltaY > 0 ? 1.15 : 1 / 1.15;
+    const rect = els.canvas.getBoundingClientRect();
+    const padL = 54;
+    const padR = 16;
+    const plotW = rect.width - padL - padR;
+    const xRatio = Math.min(1, Math.max(0, (ev.clientX - rect.left - padL) / plotW));
+    const anchor = state.tStart + state.winSec * xRatio;
+    state.winSec = Math.min(state.data.duration_s, Math.max(0.5, state.winSec * factor));
+    state.tStart = anchor - state.winSec * xRatio;
+    draw();
+  }, { passive: false });
+
+  els.canvas.addEventListener("pointerdown", (ev) => {
+    els.canvas.setPointerCapture(ev.pointerId);
+    state.drag = { x: ev.clientX, tStart: state.tStart };
+  });
+  els.canvas.addEventListener("pointermove", (ev) => {
+    if (!state.data) return;
+    const rect = els.canvas.getBoundingClientRect();
+    const padL = 54;
+    const padR = 16;
+    const plotW = rect.width - padL - padR;
+    const xRatio = (ev.clientX - rect.left - padL) / plotW;
+    const t = state.tStart + xRatio * state.winSec;
+    els.cursorInfo.textContent = `光标：t = ${t.toFixed(3)} s`;
+    if (!state.drag) return;
+    const dx = ev.clientX - state.drag.x;
+    const dt = -(dx / plotW) * state.winSec;
+    state.tStart = state.drag.tStart + dt;
+    draw();
+  });
+  els.canvas.addEventListener("pointerup", () => {
+    state.drag = null;
+  });
+  els.canvas.addEventListener("dblclick", () => {
+    if (!state.data) return;
+    state.tStart = 0;
+    state.winSec = Math.min(5, state.data.duration_s);
+    draw();
+  });
+
+  window.addEventListener("resize", () => draw());
+  loadSample();
+})();
+  </script>
+</body>
+</html>
