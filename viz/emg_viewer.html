@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>EMG Viewer</title>
+  <title>EMG & EEG Viewer</title>
   <style>
     :root {
       --bg: #0f1419;
@@ -60,7 +60,7 @@
       font-size: 12px;
       user-select: none;
     }
-    select, button, input[type="file"] { font: inherit; }
+    select, button, input[type="file"], input[type="number"] { font: inherit; }
     select, button {
       background: var(--panel);
       color: var(--text);
@@ -74,14 +74,26 @@
       background: var(--accent-dim);
       border-color: var(--accent);
     }
+    button.ghost {
+      padding: 4px 8px;
+      font-size: 11px;
+    }
     input[type="range"] {
       width: 140px;
       accent-color: var(--accent);
     }
     input[type="checkbox"] { accent-color: var(--accent); }
+    input[type="number"] {
+      width: 72px;
+      background: #12181f;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 6px;
+    }
     main {
       display: grid;
-      grid-template-columns: 240px 1fr;
+      grid-template-columns: 280px 1fr;
       min-height: 0;
     }
     aside {
@@ -96,6 +108,12 @@
       text-transform: uppercase;
       letter-spacing: 0.08em;
       color: var(--muted);
+    }
+    aside h2.row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
     }
     .chan-list { display: grid; gap: 6px; margin-bottom: 18px; }
     .chan-item {
@@ -117,8 +135,76 @@
       gap: 4px;
     }
     .stats strong { color: var(--text); font-weight: 500; }
+    .filter-panel {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 16px;
+      padding: 10px;
+      border-radius: 8px;
+      background: #12181f;
+      border: 1px solid var(--border);
+    }
+    .filter-panel .param {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 6px 8px;
+      align-items: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .filter-panel .param.hidden,
+    .filter-panel .param-row.hidden,
+    .filter-panel .notch-list.hidden { display: none !important; }
+    .filter-panel .param input[type="range"] {
+      width: 100%;
+      grid-column: 1 / -1;
+    }
+    .filter-panel .param input[type="number"] {
+      width: 76px;
+      text-align: right;
+    }
+    .filter-panel .param-unit {
+      color: var(--muted);
+      font-size: 11px;
+      margin-left: 2px;
+    }
+    .filter-panel .param-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .mode-pills {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+    .mode-pills label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 7px 4px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #0c1015;
+      color: var(--muted);
+      font-size: 12px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .mode-pills input { accent-color: var(--accent); }
+    .mode-pills label:has(input:checked) {
+      border-color: var(--accent);
+      color: var(--text);
+      background: #14302c;
+    }
+    .chain-hint {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
     .filter-note {
-      margin-top: 14px;
+      margin-top: 10px;
       padding: 8px;
       border-radius: 6px;
       background: #12181f;
@@ -137,12 +223,47 @@
     canvas#wave {
       width: 100%;
       flex: 1;
-      min-height: 320px;
+      min-height: 240px;
       background: #0c1015;
       border: 1px solid var(--border);
       border-radius: 8px;
       cursor: crosshair;
     }
+    .spec-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .spec-head select {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 3px 8px;
+    }
+    canvas#spec {
+      width: 100%;
+      height: 168px;
+      flex: 0 0 168px;
+      background: #0c1015;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: crosshair;
+    }
+    .notch-list { display: grid; gap: 6px; }
+    .notch-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 6px;
+      align-items: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .notch-row input[type="number"] { width: 68px; }
+    .notch-row button:disabled { opacity: 0.4; cursor: default; }
     .toolbar {
       display: flex;
       flex-wrap: wrap;
@@ -163,41 +284,35 @@
       flex-wrap: wrap;
     }
     .status.err { color: var(--warn); }
-    @media (max-width: 860px) {
+    @media (max-width: 900px) {
       main { grid-template-columns: 1fr; }
-      aside { border-right: none; border-bottom: 1px solid var(--border); max-height: 240px; }
+      aside { border-right: none; border-bottom: 1px solid var(--border); max-height: 320px; }
     }
   </style>
 </head>
 <body>
   <header>
     <div>
-      <h1>EMG <span>Viewer</span></h1>
-      <div class="meta" id="sourceMeta">加载示例数据中…</div>
+      <h1>EMG & EEG <span>Viewer</span></h1>
+      <div class="meta" id="sourceMeta">EMG-EEG-DENOISE · 加载示例数据中…</div>
     </div>
     <div class="controls">
-      <label class="ctrl">侧
+      <label class="ctrl">视图
         <select id="sideSelect">
-          <option value="left">左手腕</option>
-          <option value="right">右手腕</option>
-          <option value="both">双侧</option>
-        </select>
-      </label>
-      <label class="ctrl">滤波
-        <select id="filterMode">
-          <option value="raw">原始</option>
-          <option value="hp">高通 20 Hz</option>
-          <option value="bp">带通 20–450 Hz</option>
-          <option value="main" selected>主链（带通 + 50 Hz 梳状）</option>
+          <option value="left">左手腕 EMG</option>
+          <option value="right">右手腕 EMG</option>
+          <option value="both">双侧 EMG</option>
+          <option value="eeg">EEG</option>
         </select>
       </label>
       <label class="ctrl"><input type="checkbox" id="dcRemove" checked /> 去直流</label>
+      <label class="ctrl" title="按样本序号均匀间隔。采样率用整段平均 (N−1)/(末−首)，不用相邻时间戳。工频落在 50 Hz。"><input type="checkbox" id="ignoreTimestamps" checked /> 忽略物理时间戳</label>
       <label class="ctrl">窗长
         <input type="range" id="winSec" min="0.5" max="25" step="0.5" value="5" />
         <span id="winSecLabel">5.0 s</span>
       </label>
       <label class="ctrl">起点
-        <input type="range" id="tStart" min="0" max="20" step="0.05" value="0" />
+        <input type="range" id="tStart" min="0" max="5" step="0.05" value="0" />
         <span id="tStartLabel">0.00 s</span>
       </label>
       <label class="ctrl">增益
@@ -205,14 +320,95 @@
         <span id="gainLabel">1.0×</span>
       </label>
       <button class="primary" id="loadSampleBtn" type="button">加载示例</button>
-      <label class="ctrl">打开文件
-        <input type="file" id="fileInput" accept=".json,.csv,application/json,text/csv" />
-      </label>
+      <button type="button" id="openDirBtn" title="自动加载 observation.left_wrist_emg.parquet 与 observation.right_wrist_emg.parquet">打开文件夹</button>
+      <button type="button" id="openParquetBtn" title="打开 observation.eeg.parquet 或腕部 EMG parquet，可多选">打开 Parquet</button>
+      <button type="button" id="openFileBtn">JSON/CSV</button>
+      <input type="file" id="dirInput" webkitdirectory directory multiple hidden />
+      <input type="file" id="parquetInput" accept=".parquet,application/vnd.apache.parquet" multiple hidden />
+      <input type="file" id="fileInput" accept=".json,.csv,application/json,text/csv" hidden />
     </div>
   </header>
 
   <main>
     <aside>
+      <h2 class="row">
+        <span>滤波</span>
+        <button type="button" class="ghost" id="resetFilterBtn" title="恢复默认参数">默认</button>
+      </h2>
+      <div class="filter-panel" id="filterPanel">
+        <div class="mode-pills" id="filterToggles" aria-label="滤波开关">
+          <label><input type="checkbox" id="enRaw" />原始</label>
+          <label><input type="checkbox" id="enHp" checked />高通</label>
+          <label><input type="checkbox" id="enLp" checked />低通</label>
+          <label><input type="checkbox" id="enBp" />带通</label>
+          <label><input type="checkbox" id="enNotch" />陷波</label>
+          <label><input type="checkbox" id="enComb" />梳状</label>
+        </div>
+        <div class="chain-hint" id="chainHint">链路：原始（未启用滤波）</div>
+        <label class="ctrl" style="margin:0">
+          <input type="checkbox" id="enMirrorPad" checked />
+          镜像 padding（ABC→CBABCBA）
+        </label>
+        <div class="chain-hint">浏览滤波：高通/低通用镜像 + filtfilt；陷波/梳状用周期延拓（与实时因果主链不同）</div>
+
+        <div class="param" data-show="hp,bp">
+          <span>高通截止</span>
+          <span>
+            <input type="number" id="hpHzNum" min="0.5" max="200" step="0.5" value="20" />
+            <span class="param-unit">Hz</span>
+          </span>
+          <input type="range" id="hpHz" min="0.5" max="200" step="0.5" value="20" />
+        </div>
+        <div class="param-row" data-show="hp,bp">
+          <span style="flex:1;color:var(--muted);font-size:12px">高通阶数</span>
+          <select id="hpOrder">
+            <option value="2" selected>2</option>
+            <option value="4">4</option>
+            <option value="6">6</option>
+          </select>
+        </div>
+
+        <div class="param" data-show="lp,bp">
+          <span>低通截止</span>
+          <span>
+            <input type="number" id="lpHzNum" min="20" max="1000" step="1" value="450" />
+            <span class="param-unit">Hz</span>
+          </span>
+          <input type="range" id="lpHz" min="20" max="1000" step="1" value="450" />
+        </div>
+        <div class="param-row" data-show="lp,bp">
+          <span style="flex:1;color:var(--muted);font-size:12px">低通阶数</span>
+          <select id="lpOrder">
+            <option value="2">2</option>
+            <option value="4" selected>4</option>
+            <option value="6">6</option>
+          </select>
+        </div>
+
+        <div class="notch-list" id="notchList" data-show="notch"></div>
+        <div class="param-row" data-show="notch">
+          <button type="button" class="ghost" id="addNotchBtn">添加陷波</button>
+          <span class="param-unit">按频率从低到高串联，最多 8 个</span>
+        </div>
+
+        <div class="param" data-show="comb">
+          <span>梳状基频</span>
+          <span>
+            <input type="number" id="combF0Num" min="40" max="70" step="0.1" value="50" />
+            <span class="param-unit">Hz</span>
+          </span>
+          <input type="range" id="combF0" min="40" max="70" step="0.1" value="50" />
+        </div>
+        <div class="param" data-show="comb">
+          <span>梳状带宽</span>
+          <span>
+            <input type="number" id="combBwNum" min="0.5" max="10" step="0.1" value="2" />
+            <span class="param-unit">Hz</span>
+          </span>
+          <input type="range" id="combBw" min="0.5" max="10" step="0.1" value="2" />
+        </div>
+      </div>
+
       <h2>通道</h2>
       <div class="chan-list" id="chanList"></div>
       <h2>当前窗口统计</h2>
@@ -222,9 +418,24 @@
     <section class="plot-wrap">
       <div class="toolbar">
         <span>滚轮缩放 · 拖拽平移 · 双击复位</span>
-        <span class="hint">滤波在浏览器内因果运行，对齐 emg-denoise 主链参数</span>
+        <span class="hint">EMG 与 EEG 各自采样；浏览滤波为镜像 padding + filtfilt，陷波/梳状端点用周期延拓（非实时因果主链）</span>
       </div>
       <canvas id="wave"></canvas>
+      <div class="spec-head">
+        <span>频谱 · 当前窗口</span>
+        <label class="ctrl"><input type="checkbox" id="specAvg" /> 通道平均</label>
+        <label class="ctrl">上限
+          <select id="specFmax">
+            <option value="0">Nyquist</option>
+            <option value="50">50 Hz</option>
+            <option value="100">100 Hz</option>
+            <option value="250">250 Hz</option>
+            <option value="500">500 Hz</option>
+          </select>
+        </label>
+        <span id="specNote">—</span>
+      </div>
+      <canvas id="spec"></canvas>
     </section>
   </main>
 
@@ -240,7 +451,47 @@
     "#f2d16b", "#ff7b9c", "#6ed6e0", "#b8c4d4",
   ];
 
-  /* ---------- DSP (Butterworth SOS + 50 Hz IIR comb) ---------- */
+  const DEFAULT_FILTER = {
+    // Independent stage switches. "raw" means bypass (no DSP stages).
+    enableRaw: false,
+    enableHp: true,
+    enableLp: true,
+    enableBp: false,
+    enableNotch: false,
+    enableComb: false,
+    mirrorPad: true,
+    hpHz: 20,
+    hpOrder: 2,
+    lpHz: 450,
+    lpOrder: 4,
+    notches: [{ f0: 50, bw: 2 }],
+    combF0: 50,
+    combBw: 2,
+  };
+
+  const EEG_FILTER = {
+    ...DEFAULT_FILTER,
+    hpHz: 1,
+    lpHz: 40,
+    enableNotch: true,
+    notches: [{ f0: 50, bw: 2 }],
+  };
+
+  function cloneFilter(f) {
+    const notches = (f.notches && f.notches.length ? f.notches : [{ f0: 50, bw: 2 }]).map((n) => ({
+      f0: Number(n.f0),
+      bw: Number(n.bw),
+    }));
+    return { ...f, notches };
+  }
+
+  function channelColor(index) {
+    if (index < COLORS.length) return COLORS[index];
+    const hue = (index * 47) % 360;
+    return `hsl(${hue} 62% 62%)`;
+  }
+
+  /* ---------- DSP (Butterworth SOS + IIR comb) ---------- */
   const DSP = (() => {
     function buttap(order) {
       const poles = [];
@@ -263,7 +514,6 @@
     }
 
     function lp2hpZpk(zpk, wo) {
-      // Match scipy.signal.lp2hp_zpk: k_hp = k * real(prod(-z)/prod(-p))
       const degree = zpk.p.length - zpk.z.length;
       let num = { re: 1, im: 0 };
       let den = { re: 1, im: 0 };
@@ -284,7 +534,6 @@
     }
 
     function bilinearZpk(zpk, fs) {
-      // Match scipy.signal.bilinear_zpk (empty prod(fs2 - z) == 1).
       const fs2 = 2 * fs;
       const transform = (c) => {
         const num = { re: fs2 + c.re, im: c.im };
@@ -339,18 +588,16 @@
     function zpk2sos(zpk) {
       const zp = pairConjugates(zpk.z);
       const pp = pairConjugates(zpk.p);
-      const sections = [];
-      const nSec = Math.max(zp.pairs.length + Math.ceil(zp.reals.length / 2), pp.pairs.length + Math.ceil(pp.reals.length / 2), 1);
       const zPairs = zp.pairs.slice();
       const pPairs = pp.pairs.slice();
       const zRe = zp.reals.slice();
       const pRe = pp.reals.slice();
+      const sections = [];
 
       while (zPairs.length || pPairs.length || zRe.length || pRe.length) {
         let b0 = 1, b1 = 0, b2 = 0, a0 = 1, a1 = 0, a2 = 0;
         if (pPairs.length) {
           const [p1, p2] = pPairs.shift();
-          // (1 - p1 z^-1)(1 - p2 z^-1)
           a1 = -(p1.re + p2.re);
           a2 = p1.re * p2.re - p1.im * p2.im;
         } else if (pRe.length >= 2) {
@@ -360,7 +607,6 @@
           a2 = r1 * r2;
         } else if (pRe.length === 1) {
           a1 = -pRe.shift().re;
-          a2 = 0;
         }
         if (zPairs.length) {
           const [z1, z2] = zPairs.shift();
@@ -373,11 +619,9 @@
           b2 = r1 * r2;
         } else if (zRe.length === 1) {
           b1 = -zRe.shift().re;
-          b2 = 0;
         }
         sections.push([b0, b1, b2, a0, a1, a2]);
       }
-      // Apply overall gain to first section
       if (!sections.length) sections.push([1, 0, 0, 1, 0, 0]);
       sections[0][0] *= zpk.k;
       sections[0][1] *= zpk.k;
@@ -387,7 +631,10 @@
 
     function butterSOS(order, cutoffHz, fs, btype) {
       if (!(fs > 0) || !(cutoffHz > 0) || cutoffHz >= fs / 2) {
-        throw new Error(`invalid cutoff ${cutoffHz} for fs=${fs}`);
+        throw new Error(`截止频率 ${cutoffHz} Hz 无效（fs=${fs.toFixed(1)} Hz，Nyquist=${(fs / 2).toFixed(1)}）`);
+      }
+      if (order % 2 !== 0 || order < 2 || order > 8) {
+        throw new Error("Butterworth 阶数须为 2/4/6/8");
       }
       const warped = 2 * fs * Math.tan((Math.PI * cutoffHz) / fs);
       let zpk = buttap(order);
@@ -416,7 +663,47 @@
       return y;
     }
 
+    function reverseCopy(x) {
+      const y = new Float32Array(x.length);
+      for (let i = 0, j = x.length - 1; i < x.length; i++, j--) y[i] = x[j];
+      return y;
+    }
+
+    /** Offline zero-phase: forward sosfilt, reverse, sosfilt, reverse. */
+    function sosfiltfilt(sos, x) {
+      const fwd = sosfilt(sos, x);
+      const bwd = sosfilt(sos, reverseCopy(fwd));
+      return reverseCopy(bwd);
+    }
+
+    /** Second-order IIR notch at f0 with -3 dB bandwidth bwHz (RBJ cookbook). */
+    function iirNotchSos(f0, bwHz, fs) {
+      if (!(f0 > 0) || f0 >= fs / 2) {
+        throw new Error(`陷波中心 ${f0} Hz 无效（fs=${fs.toFixed(1)}）`);
+      }
+      if (!(bwHz > 0) || bwHz >= fs / 2) {
+        throw new Error(`陷波带宽 ${bwHz} Hz 无效`);
+      }
+      const Q = f0 / bwHz;
+      const w0 = (2 * Math.PI * f0) / fs;
+      const cosw = Math.cos(w0);
+      const alpha = Math.sin(w0) / (2 * Q);
+      const b0 = 1;
+      const b1 = -2 * cosw;
+      const b2 = 1;
+      const a0 = 1 + alpha;
+      const a1 = -2 * cosw;
+      const a2 = 1 - alpha;
+      return [[b0 / a0, b1 / a0, b2 / a0, 1, a1 / a0, a2 / a0]];
+    }
+
     function iirComb(x, fs, { f0 = 50, bandwidth = 2 } = {}) {
+      if (!(f0 > 0) || f0 >= fs / 2) {
+        throw new Error(`梳状基频 ${f0} Hz 无效（fs=${fs.toFixed(1)}）`);
+      }
+      if (!(bandwidth > 0) || bandwidth >= 2 * f0) {
+        throw new Error(`梳状带宽 ${bandwidth} Hz 无效`);
+      }
       const delay = Math.max(1, Math.round(fs / f0));
       const beta = Math.tan((Math.PI * bandwidth) / (2 * f0));
       const r = (1 - beta) / (1 + beta);
@@ -427,9 +714,7 @@
       let pos = 0;
       for (let n = 0; n < x.length; n++) {
         const xn = x[n];
-        const xD = bufX[pos];
-        const yD = bufY[pos];
-        const yn = g * (xn - xD) + r * yD;
+        const yn = g * (xn - bufX[pos]) + r * bufY[pos];
         y[n] = yn;
         bufX[pos] = xn;
         bufY[pos] = yn;
@@ -438,43 +723,360 @@
       return { y, delay, g, r };
     }
 
-    function bandpassSos(fs) {
-      const nyq = fs / 2;
-      const lp = Math.min(450, 0.9 * nyq);
-      const hp = butterSOS(2, 20, fs, "highpass");
-      const low = butterSOS(4, lp, fs, "lowpass");
-      return { sos: hp.concat(low), lpCut: lp };
+    function clampLp(fs, lpHz) {
+      // UI allows up to 1000 Hz; IIR design must stay strictly below Nyquist.
+      const maxLp = Math.min(1000, 0.999 * (fs / 2));
+      return Math.min(lpHz, maxLp);
     }
 
-    function applyMode(samples, fs, mode) {
-      if (mode === "raw") {
-        return { samples: Float32Array.from(samples), note: "原始信号" };
+    /** Whole-signal mirror pad: ABC → CBABCBA (length 3N-2). */
+    function mirrorPad(x) {
+      const n = x.length;
+      if (n < 2) return { padded: Float32Array.from(x), n, used: false };
+      const out = new Float32Array(3 * n - 2);
+      // left = reverse(S[1:])
+      for (let i = 1; i < n; i++) out[n - 1 - i] = x[i];
+      // mid = S
+      out.set(x, n - 1);
+      // right = reverse(S[:-1])
+      const rightStart = 2 * n - 1;
+      for (let i = 0; i < n - 1; i++) out[rightStart + i] = x[n - 2 - i];
+      return { padded: out, n, used: true };
+    }
+
+    function mirrorUnpad(y, n) {
+      if (n < 2) return Float32Array.from(y);
+      return y.slice(n - 1, 2 * n - 1);
+    }
+
+    /**
+     * Replace the first/last ~50 ms by an even reflection of the interior.
+     * filtfilt still leaves a short boundary ramp (often the last <100 ms);
+     * reflecting the inside removes that spike without changing the passband.
+     */
+    function repairEdgeReflect(y, fs) {
+      const n = y.length;
+      const L = Math.min(Math.floor(n / 4), Math.max(8, Math.round(0.05 * fs)));
+      if (!(L >= 8) || n < 4 * L) return { samples: y, repaired: 0 };
+      const z = new Float32Array(y);
+      for (let i = 0; i < L; i++) {
+        z[i] = y[2 * L - 1 - i];
+        z[n - L + i] = y[n - L - 1 - i];
+      }
+      return { samples: z, repaired: L };
+    }
+
+    function medianOf(vals) {
+      if (!vals.length) return 0;
+      const s = vals.slice().sort((a, b) => a - b);
+      const m = Math.floor(s.length / 2);
+      return s.length % 2 ? s[m] : 0.5 * (s[m - 1] + s[m]);
+    }
+
+    function percentileAbs(x, i0, i1, p) {
+      const s = [];
+      for (let i = i0; i < i1; i++) s.push(Math.abs(x[i]));
+      if (!s.length) return 0;
+      s.sort((a, b) => a - b);
+      const idx = Math.min(s.length - 1, Math.max(0, Math.round(p * (s.length - 1))));
+      return s[idx];
+    }
+
+    /**
+     * A 0.5 Hz highpass + even mirror leaves a few cycles at each end that are
+     * not periodic at the mains frequency. The comb then rings on that kink.
+     * Overwrite only those cycles with the first clean period just inside.
+     */
+    function repairPeriodicEdges(y, fs, f0) {
+      const n = y.length;
+      const D = Math.max(1, Math.round(fs / f0));
+      const z = new Float32Array(y);
+      if (n < 8 * D) return { samples: z, head: 0, tail: 0 };
+      const mis = (i) => {
+        let m = 0;
+        for (let k = 0; k < D; k++) {
+          const d = Math.abs(z[i + k] - z[i + D + k]);
+          if (d > m) m = d;
+        }
+        return m;
+      };
+      const mid = Math.floor(n / 2);
+      const refs = [];
+      const refEnd = Math.min(mid + Math.round(fs), n - 2 * D);
+      for (let i = mid; i < refEnd; i += D) refs.push(mis(i));
+      const ref = medianOf(refs) + 1e-9;
+      const peak = percentileAbs(z, mid, Math.min(n, mid + Math.round(fs)), 0.99) + 1e-9;
+      const thr = Math.max(8 * ref, 0.08 * peak);
+      const S = Math.min(Math.round(1.5 * fs), Math.floor(n / 4) - 2 * D);
+      let head = 0;
+      for (let i = 0; i < S; i += D) {
+        if (mis(i) > thr) head = i + D;
+        else break;
+      }
+      let tail = 0;
+      for (let i = 0; i < S; i += D) {
+        const j = n - 2 * D - i;
+        if (j < 0) break;
+        if (mis(j) > thr) tail = i + D;
+        else break;
+      }
+      if (head >= D) {
+        const src = z.slice(head, head + D);
+        for (let i = 0; i < head; i++) z[head - 1 - i] = src[(D - 1 - (i % D)) % D];
+      }
+      if (tail >= D) {
+        const src = z.slice(n - tail - D, n - tail);
+        for (let i = 0; i < tail; i++) z[n - tail + i] = src[i % D];
+      }
+      return { samples: z, head, tail };
+    }
+
+    /**
+     * Forward-backward biquad notch on a period-continuous pad.
+     * Pad length covers the narrowband ring-down (~1/bandwidth), so the
+     * notch is already settled when it reaches the real samples.
+     */
+    function notchFiltfiltPeriod(x, fs, f0, bw) {
+      const D = Math.max(1, Math.round(fs / f0));
+      const n = x.length;
+      const settle = Math.ceil((6.9 * fs) / (Math.PI * Math.max(bw, 1e-3)));
+      const npre = Math.min(Math.floor(n / 2), Math.max(D * 8, settle));
+      if (!(npre >= D) || n < D * 4) return sosfiltfilt(iirNotchSos(f0, bw, fs), x);
+      const padded = new Float32Array(n + 2 * npre);
+      for (let i = 0; i < npre; i++) {
+        padded[npre - 1 - i] = x[(D - 1 - (i % D) + D) % D];
+        padded[npre + n + i] = x[n - D + (i % D)];
+      }
+      padded.set(x, npre);
+      return sosfiltfilt(iirNotchSos(f0, bw, fs), padded).slice(npre, npre + n);
+    }
+
+    /** Forward-backward comb on a period-continuous pad so the notch is already settled. */
+    function combFiltfiltPeriod(x, fs, f0, bw) {
+      const D = Math.max(1, Math.round(fs / f0));
+      const n = x.length;
+      const npre = Math.max(D * 4, Math.round(2 * fs));
+      const padded = new Float32Array(n + 2 * npre);
+      for (let i = 0; i < npre; i++) {
+        padded[npre - 1 - i] = x[(D - 1 - (i % D) + D) % D];
+        padded[npre + n + i] = x[n - D + (i % D)];
+      }
+      padded.set(x, npre);
+      const fwd = iirComb(padded, fs, { f0, bandwidth: bw });
+      const bwd = iirComb(reverseCopy(fwd.y), fs, { f0, bandwidth: bw });
+      return { samples: reverseCopy(bwd.y).slice(npre, npre + n), delay: fwd.delay };
+    }
+
+    /**
+     * Crossfade a decaying edge ring (comb startup) toward an even reflection
+     * of the interior. A flat burst that does not decay is left alone.
+     */
+    function fadeEdgeRing(y, fs) {
+      const n = y.length;
+      const hop = Math.max(8, Math.round(0.05 * fs));
+      const maxL = Math.min(Math.floor(n / 5), Math.round(0.8 * fs));
+      const z = new Float32Array(y);
+      if (maxL < hop * 4) return { samples: z, faded: 0 };
+      const rms = (a, b) => {
+        let s = 0;
+        for (let i = a; i < b; i++) s += z[i] * z[i];
+        return Math.sqrt(s / (b - a));
+      };
+      let faded = 0;
+      for (const fromEnd of [false, true]) {
+        const interiorA = fromEnd ? n - maxL - Math.round(0.5 * fs) : maxL;
+        const interiorB = interiorA + Math.round(0.5 * fs);
+        if (interiorA < 0 || interiorB > n) continue;
+        const interior = rms(interiorA, interiorB);
+        const nH = Math.floor(maxL / hop);
+        const hops = [];
+        for (let h = 0; h < nH; h++) {
+          const a = fromEnd ? n - (h + 1) * hop : h * hop;
+          hops.push(rms(a, a + hop));
+        }
+        let nHop = 0;
+        for (let h = 0; h < hops.length; h++) {
+          if (hops[h] <= 2.2 * interior) break;
+          if (h > 0 && hops[h] > hops[h - 1] * 1.25) break;
+          nHop = h + 1;
+        }
+        if (nHop < 2 || hops[nHop - 1] > hops[0] * 0.85) continue;
+        const L = nHop * hop;
+        for (let i = 0; i < L; i++) {
+          const w = 0.5 * (1 - Math.cos((Math.PI * (L - 1 - i)) / Math.max(L - 1, 1)));
+          if (!fromEnd) {
+            z[i] = (1 - w) * z[i] + w * z[2 * L - 1 - i];
+          } else {
+            const idx = n - 1 - i;
+            z[idx] = (1 - w) * z[idx] + w * z[n - L - 1 - i];
+          }
+        }
+        faded = Math.max(faded, L);
+      }
+      return { samples: z, faded };
+    }
+
+    function activeNotches(cfg, fs) {
+      const nyq = fs / 2;
+      const out = [];
+      for (const n of cfg.notches || []) {
+        const f0 = Number(n.f0);
+        const bw = Number(n.bw);
+        if (!(f0 > 0) || f0 >= nyq) {
+          throw new Error(`陷波中心 ${f0} Hz 无效（Nyquist ${nyq.toFixed(1)} Hz）`);
+        }
+        if (!(bw > 0) || bw >= nyq) throw new Error(`陷波带宽 ${bw} Hz 无效`);
+        out.push({ f0, bw });
+      }
+      out.sort((a, b) => a.f0 - b.f0);
+      return out;
+    }
+
+    function applyFilter(samples, fs, cfg) {
+      const useHp = !!cfg.enableHp;
+      const useLp = !!cfg.enableLp;
+      const useBp = !!cfg.enableBp;
+      const useNotch = !!cfg.enableNotch;
+      const useComb = !!cfg.enableComb;
+      const useMirror = cfg.mirrorPad !== false;
+      const bypass =
+        !!cfg.enableRaw || (!useHp && !useLp && !useBp && !useNotch && !useComb);
+
+      if (bypass) {
+        return { samples: Float32Array.from(samples), note: "原始信号（未启用滤波）", stages: ["原始"] };
       }
       if (!(fs > 40)) throw new Error("采样率过低，无法滤波");
-      if (mode === "hp") {
-        const sos = butterSOS(2, 20, fs, "highpass");
-        return {
-          samples: sosfilt(sos, samples),
-          note: `Butterworth 高通 2 阶 · 20 Hz · fs=${fs.toFixed(1)} Hz`,
-        };
+
+      const hpHz = Number(cfg.hpHz);
+      const lpHzReq = Number(cfg.lpHz);
+      const hpOrder = Number(cfg.hpOrder);
+      const lpOrder = Number(cfg.lpOrder);
+      const combF0 = Number(cfg.combF0);
+      const combBw = Number(cfg.combBw);
+      const lpHz = clampLp(fs, lpHzReq);
+      const lpClamped = lpHz < lpHzReq - 1e-6;
+      const stages = [];
+
+      const n = samples.length;
+      let y = samples;
+      let padded = false;
+      if (useMirror && n >= 2) {
+        const pad = mirrorPad(samples);
+        y = pad.padded;
+        padded = pad.used;
       }
-      const { sos, lpCut } = bandpassSos(fs);
-      let y = sosfilt(sos, samples);
-      if (mode === "bp") {
-        return {
-          samples: y,
-          note: `Butterworth 带通 20–${lpCut.toFixed(0)} Hz（HP2 + LP4）· fs=${fs.toFixed(1)} Hz`,
-        };
+      let combEdge = null;
+      let notchEdge = null;
+
+      // Offline browse path: filtfilt (zero-phase) + optional mirror pad.
+      // Cascade: 高通 → 低通 → 带通 → 陷波 → 梳状
+      if (useHp) {
+        y = sosfiltfilt(butterSOS(hpOrder, hpHz, fs, "highpass"), y);
+        stages.push(`高通${hpOrder}@${hpHz}Hz`);
       }
-      // main chain
-      const comb = iirComb(y, fs);
-      return {
-        samples: comb.y,
-        note: `主链：20–${lpCut.toFixed(0)} Hz 带通 + 50 Hz IIR 梳状（delay=${comb.delay}, Q≈25）· 含约 1 s 预热`,
-      };
+      if (useLp) {
+        y = sosfiltfilt(butterSOS(lpOrder, lpHz, fs, "lowpass"), y);
+        stages.push(`低通${lpOrder}@${lpHz.toFixed(0)}Hz`);
+      }
+      if (useBp) {
+        if (!(hpHz < lpHz)) {
+          throw new Error(`带通要求高通截止 < 低通截止（当前 ${hpHz} ≥ ${lpHz.toFixed(0)}）`);
+        }
+        const sos = butterSOS(hpOrder, hpHz, fs, "highpass").concat(
+          butterSOS(lpOrder, lpHz, fs, "lowpass")
+        );
+        y = sosfiltfilt(sos, y);
+        stages.push(`带通${hpHz}–${lpHz.toFixed(0)}Hz`);
+      }
+      if (useNotch) {
+        const notches = activeNotches(cfg, fs);
+        if (!notches.length) throw new Error("请至少保留一个陷波");
+        // Same edge problem as the comb: a mirrored mains sine is a step at
+        // the fold, and a narrow biquad rings for about a second on it.
+        if (padded) {
+          y = mirrorUnpad(y, n);
+          padded = false;
+        } else if (!(y instanceof Float32Array)) {
+          y = Float32Array.from(y);
+        }
+        let head = 0;
+        let tail = 0;
+        for (const notch of notches) {
+          const aligned = repairPeriodicEdges(y, fs, notch.f0);
+          head = Math.max(head, aligned.head);
+          tail = Math.max(tail, aligned.tail);
+          y = notchFiltfiltPeriod(aligned.samples, fs, notch.f0, notch.bw);
+          stages.push(`陷波${notch.f0}/${notch.bw}Hz`);
+        }
+        const faded = fadeEdgeRing(y, fs);
+        y = faded.samples;
+        notchEdge = { head, tail, faded: faded.faded };
+      }
+      if (useComb) {
+        // Unpad before the comb. Even-mirroring a mains sine reverses its phase
+        // and the comb rings for ~1 s; a period-matched pad is already settled.
+        if (padded) {
+          y = mirrorUnpad(y, n);
+          padded = false;
+        } else if (!(y instanceof Float32Array)) {
+          y = Float32Array.from(y);
+        }
+        const aligned = repairPeriodicEdges(y, fs, combF0);
+        const comb = combFiltfiltPeriod(aligned.samples, fs, combF0, combBw);
+        const faded = fadeEdgeRing(comb.samples, fs);
+        y = faded.samples;
+        combEdge = { head: aligned.head, tail: aligned.tail, faded: faded.faded, delay: comb.delay };
+        stages.push(`梳状${combF0}/${combBw}Hz(d=${comb.delay})`);
+      }
+
+      if (padded) y = mirrorUnpad(y, n);
+      else if (!(y instanceof Float32Array)) y = Float32Array.from(y);
+
+      let repaired = 0;
+      if (!useComb && !useNotch) {
+        const edge = repairEdgeReflect(y, fs);
+        y = edge.samples;
+        repaired = edge.repaired;
+      }
+
+      const note = [
+        `链路：${stages.join(" → ")}`,
+        "filtfilt",
+        useMirror && n >= 2 ? "镜像padding" : null,
+        useNotch ? "陷波周期延拓" : null,
+        notchEdge && (notchEdge.head || notchEdge.tail)
+          ? `陷波对齐 首${((notchEdge.head / fs) * 1000).toFixed(0)}ms 尾${((notchEdge.tail / fs) * 1000).toFixed(0)}ms`
+          : null,
+        notchEdge && notchEdge.faded
+          ? `陷波消振${((notchEdge.faded / fs) * 1000).toFixed(0)}ms`
+          : null,
+        useComb ? "梳状周期延拓" : null,
+        combEdge && (combEdge.head || combEdge.tail)
+          ? `周期对齐 首${((combEdge.head / fs) * 1000).toFixed(0)}ms 尾${((combEdge.tail / fs) * 1000).toFixed(0)}ms`
+          : null,
+        combEdge && combEdge.faded
+          ? `端点消振${((combEdge.faded / fs) * 1000).toFixed(0)}ms`
+          : null,
+        repaired ? `边缘回填${((repaired / fs) * 1000).toFixed(0)}ms` : null,
+        lpClamped && (useLp || useBp) ? "低通已钳位" : null,
+        `fs=${fs.toFixed(1)} Hz`,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      return { samples: y, note, stages, mirrorPad: useMirror && n >= 2 };
     }
 
-    return { applyMode, bandpassSos, butterSOS, sosfilt, iirComb };
+    return {
+      applyFilter,
+      butterSOS,
+      sosfilt,
+      sosfiltfilt,
+      iirNotchSos,
+      iirComb,
+      clampLp,
+      mirrorPad,
+      mirrorUnpad,
+    };
   })();
 
   const state = {
@@ -482,19 +1084,49 @@
     side: "left",
     enabled: {},
     dcRemove: true,
-    filterMode: "main",
+    ignoreTimestamps: true,
+    kind: "emg",
+    filterByKind: { emg: cloneFilter(DEFAULT_FILTER), eeg: cloneFilter(EEG_FILTER) },
+    filter: cloneFilter(DEFAULT_FILTER),
+    specAvg: false,
+    specFmax: 0,
+    specCache: null,
+    specHover: null,
     winSec: 5,
     tStart: 0,
     gain: 1,
     drag: null,
-    filterCache: null, // { mode, fs, sides: { left: Float32Array[], ... } }
+    filterCache: null,
+    filterTimer: null,
   };
 
   const els = {
     sourceMeta: document.getElementById("sourceMeta"),
     sideSelect: document.getElementById("sideSelect"),
-    filterMode: document.getElementById("filterMode"),
+    filterToggles: document.getElementById("filterToggles"),
+    enRaw: document.getElementById("enRaw"),
+    enHp: document.getElementById("enHp"),
+    enLp: document.getElementById("enLp"),
+    enBp: document.getElementById("enBp"),
+    enNotch: document.getElementById("enNotch"),
+    enComb: document.getElementById("enComb"),
+    enMirrorPad: document.getElementById("enMirrorPad"),
+    chainHint: document.getElementById("chainHint"),
+    hpHz: document.getElementById("hpHz"),
+    hpHzNum: document.getElementById("hpHzNum"),
+    hpOrder: document.getElementById("hpOrder"),
+    lpHz: document.getElementById("lpHz"),
+    lpHzNum: document.getElementById("lpHzNum"),
+    lpOrder: document.getElementById("lpOrder"),
+    notchList: document.getElementById("notchList"),
+    addNotchBtn: document.getElementById("addNotchBtn"),
+    combF0: document.getElementById("combF0"),
+    combF0Num: document.getElementById("combF0Num"),
+    combBw: document.getElementById("combBw"),
+    combBwNum: document.getElementById("combBwNum"),
+    resetFilterBtn: document.getElementById("resetFilterBtn"),
     dcRemove: document.getElementById("dcRemove"),
+    ignoreTimestamps: document.getElementById("ignoreTimestamps"),
     winSec: document.getElementById("winSec"),
     winSecLabel: document.getElementById("winSecLabel"),
     tStart: document.getElementById("tStart"),
@@ -502,6 +1134,11 @@
     gain: document.getElementById("gain"),
     gainLabel: document.getElementById("gainLabel"),
     loadSampleBtn: document.getElementById("loadSampleBtn"),
+    openDirBtn: document.getElementById("openDirBtn"),
+    openParquetBtn: document.getElementById("openParquetBtn"),
+    openFileBtn: document.getElementById("openFileBtn"),
+    dirInput: document.getElementById("dirInput"),
+    parquetInput: document.getElementById("parquetInput"),
     fileInput: document.getElementById("fileInput"),
     chanList: document.getElementById("chanList"),
     statsBox: document.getElementById("statsBox"),
@@ -509,12 +1146,199 @@
     cursorInfo: document.getElementById("cursorInfo"),
     status: document.getElementById("status"),
     canvas: document.getElementById("wave"),
+    specCanvas: document.getElementById("spec"),
+    specAvg: document.getElementById("specAvg"),
+    specFmax: document.getElementById("specFmax"),
+    specNote: document.getElementById("specNote"),
   };
   const ctx = els.canvas.getContext("2d");
+  const specCtx = els.specCanvas.getContext("2d");
 
   function setStatus(msg, isErr = false) {
     els.status.textContent = msg;
     els.status.classList.toggle("err", isErr);
+  }
+
+  function meanSampleRate(time) {
+    const n = time?.length || 0;
+    if (n < 2) return 0;
+    const span = Number(time[n - 1]) - Number(time[0]);
+    return span > 0 ? (n - 1) / span : 0;
+  }
+
+  function uniformTime(time) {
+    const n = time.length;
+    const out = new Float64Array(n);
+    const t0 = Number(time[0]) || 0;
+    const span = n > 1 ? Number(time[n - 1]) - t0 : 0;
+    const dt = n > 1 ? span / (n - 1) : 0;
+    for (let i = 0; i < n; i++) out[i] = t0 + i * dt;
+    return out;
+  }
+
+  /** Physical timestamps, or a uniform grid at the mean rate when that option is on. */
+  function effectiveClock(block) {
+    if (!block) return { time: new Float64Array(), fs_hz: 0 };
+    if (!state.ignoreTimestamps) return { time: block.time, fs_hz: Number(block.fs_hz) };
+    if (block.uniformClock && block.uniformClock.timeSrc === block.time) return block.uniformClock;
+    const time = uniformTime(block.time);
+    const clock = {
+      timeSrc: block.time,
+      time,
+      fs_hz: meanSampleRate(time) || Number(block.fs_hz),
+    };
+    block.uniformClock = clock;
+    return clock;
+  }
+
+  function filterKey(cfg, keys) {
+    const fsPart = keys.map((key) => {
+      const clock = effectiveClock(state.data.sides[key]);
+      return `${key}@${clock.fs_hz.toFixed(3)}@${state.ignoreTimestamps ? "uniform" : "stamp"}`;
+    }).join(",");
+    return [
+      cfg.enableRaw, cfg.enableHp, cfg.enableLp, cfg.enableBp, cfg.enableNotch, cfg.enableComb,
+      cfg.mirrorPad,
+      fsPart, cfg.hpHz, cfg.hpOrder, cfg.lpHz, cfg.lpOrder,
+      (cfg.notches || []).map((n) => `${n.f0}@${n.bw}`).join(","),
+      cfg.combF0, cfg.combBw,
+    ].join("|");
+  }
+
+  function activeSideKeys() {
+    if (!state.data) return [];
+    if (state.side === "both") return ["left", "right"].filter((key) => state.data.sides[key]);
+    return state.data.sides[state.side] ? [state.side] : [];
+  }
+
+  function viewDuration() {
+    const keys = activeSideKeys();
+    if (!keys.length) return state.data?.duration_s || 0;
+    return Math.min(...keys.map((key) => state.data.sides[key].duration_s || 0));
+  }
+
+  function formatFs(fs) {
+    const rounded = Math.round(fs);
+    if (rounded > 0 && Math.abs(fs - rounded) / rounded < 0.02) return `${rounded} Hz`;
+    return `${Number(fs).toFixed(1)} Hz`;
+  }
+
+  function anyFilterOn(cfg) {
+    return !!(cfg.enableHp || cfg.enableLp || cfg.enableBp || cfg.enableNotch || cfg.enableComb);
+  }
+
+  function clamp(v, min, max) {
+    return Math.min(max, Math.max(min, v));
+  }
+
+  function setLinked(rangeEl, numEl, value) {
+    const min = Number(rangeEl.min);
+    const max = Number(rangeEl.max);
+    const step = Number(rangeEl.step) || 1;
+    let v = Number(value);
+    if (!Number.isFinite(v)) v = Number(rangeEl.value);
+    // snap to step
+    v = Math.round((v - min) / step) * step + min;
+    v = clamp(v, min, max);
+    // avoid float dust for display
+    const decimals = String(step).includes(".") ? String(step).split(".")[1].length : 0;
+    const shown = decimals ? v.toFixed(decimals) : String(Math.round(v));
+    rangeEl.value = shown;
+    numEl.value = shown;
+    return Number(shown);
+  }
+
+  function syncFilterUiFromState() {
+    const f = state.filter;
+    const bypass = !!f.enableRaw || !anyFilterOn(f);
+    els.enRaw.checked = bypass;
+    els.enHp.checked = !!f.enableHp && !bypass;
+    els.enLp.checked = !!f.enableLp && !bypass;
+    els.enBp.checked = !!f.enableBp && !bypass;
+    els.enNotch.checked = !!f.enableNotch && !bypass;
+    els.enComb.checked = !!f.enableComb && !bypass;
+    els.enMirrorPad.checked = f.mirrorPad !== false;
+    setLinked(els.hpHz, els.hpHzNum, f.hpHz);
+    els.hpOrder.value = String(f.hpOrder);
+    setLinked(els.lpHz, els.lpHzNum, f.lpHz);
+    els.lpOrder.value = String(f.lpOrder);
+    renderNotchList();
+    setLinked(els.combF0, els.combF0Num, f.combF0);
+    setLinked(els.combBw, els.combBwNum, f.combBw);
+    updateParamVisibility();
+    updateChainHint();
+  }
+
+  function readFilterFromUi() {
+    state.filter = {
+      enableRaw: els.enRaw.checked,
+      enableHp: els.enHp.checked,
+      enableLp: els.enLp.checked,
+      enableBp: els.enBp.checked,
+      enableNotch: els.enNotch.checked,
+      enableComb: els.enComb.checked,
+      mirrorPad: els.enMirrorPad.checked,
+      hpHz: setLinked(els.hpHz, els.hpHzNum, els.hpHz.value),
+      hpOrder: Number(els.hpOrder.value),
+      lpHz: setLinked(els.lpHz, els.lpHzNum, els.lpHz.value),
+      lpOrder: Number(els.lpOrder.value),
+      notches: (state.filter.notches || []).map((n) => ({ f0: Number(n.f0), bw: Number(n.bw) })),
+      combF0: setLinked(els.combF0, els.combF0Num, els.combF0.value),
+      combBw: setLinked(els.combBw, els.combBwNum, els.combBw.value),
+    };
+    state.filterByKind[state.kind] = cloneFilter(state.filter);
+  }
+
+  function currentKind() {
+    return state.side === "eeg" ? "eeg" : "emg";
+  }
+
+  function applyKindFilter(kind) {
+    state.kind = kind;
+    state.filter = cloneFilter(state.filterByKind[kind]);
+    state.filterCache = null;
+    syncFilterUiFromState();
+  }
+
+  function updateParamVisibility() {
+    const showHp = els.enHp.checked || els.enBp.checked;
+    const showLp = els.enLp.checked || els.enBp.checked;
+    const showNotch = els.enNotch.checked;
+    const showComb = els.enComb.checked;
+    document.querySelectorAll("[data-show]").forEach((node) => {
+      const keys = node.getAttribute("data-show").split(",");
+      const visible =
+        (keys.includes("hp") && showHp) ||
+        (keys.includes("lp") && showLp) ||
+        (keys.includes("notch") && showNotch) ||
+        (keys.includes("comb") && showComb);
+      node.classList.toggle("hidden", !visible);
+    });
+  }
+
+  function updateChainHint() {
+    const parts = [];
+    if (els.enHp.checked) parts.push("高通");
+    if (els.enLp.checked) parts.push("低通");
+    if (els.enBp.checked) parts.push("带通");
+    if (els.enNotch.checked) {
+      const freqs = (state.filter.notches || []).map((n) => n.f0);
+      parts.push(freqs.length ? `陷波${freqs.join("/")}Hz` : "陷波");
+    }
+    if (els.enComb.checked) parts.push("梳状");
+    if (!parts.length) {
+      els.chainHint.textContent = "链路：原始（未启用滤波）";
+      return;
+    }
+    const pad = els.enMirrorPad.checked ? "镜像padding → " : "";
+    const notchPad = els.enNotch.checked ? " · 陷波周期延拓" : "";
+    const combPad = els.enComb.checked ? " · 梳状周期延拓" : "";
+    els.chainHint.textContent = `链路：${pad}${parts.join(" → ")}（filtfilt）${els.enMirrorPad.checked ? " → 裁剪" : ""}${notchPad}${combPad}`;
+  }
+
+  function updateLpSliderLimit() {
+    els.lpHz.max = "1000";
+    els.lpHzNum.max = "1000";
   }
 
   function decodeF32Base64(b64) {
@@ -529,14 +1353,19 @@
       throw new Error("仅支持 encoding=base64 / dtype=float32 的示例 JSON");
     }
     const time = decodeF32Base64(obj.time);
+    const duration = obj.duration_s ?? (time[time.length - 1] - time[0]);
     const sides = {};
-    for (const side of ["left", "right"]) {
+    for (const side of ["left", "right", "eeg"]) {
       if (!obj[side]) continue;
       sides[side] = {
+        kind: side === "eeg" ? "eeg" : "emg",
         names: obj[side].names || [],
         channels: obj[side].channels.map(decodeF32Base64),
         mean: obj[side].mean || [],
         std: obj[side].std || [],
+        time,
+        fs_hz: obj.fs_hz,
+        duration_s: duration,
       };
     }
     return {
@@ -544,7 +1373,7 @@
       source_path: obj.source_path || "",
       fs_hz: obj.fs_hz,
       original_fs_hz: obj.original_fs_hz,
-      duration_s: obj.duration_s ?? (time[time.length - 1] - time[0]),
+      duration_s: duration,
       unit: obj.unit || "",
       time,
       sides,
@@ -574,21 +1403,26 @@
     for (let i = 0; i < n; i++) time[i] -= t0;
     const dt = (time[Math.min(n - 1, 100)] - time[0]) / Math.min(n - 1, 100);
     const fs = dt > 0 ? 1 / dt : 0;
-    const sideName = /right/i.test(filename) ? "right" : "left";
+    const sideName = /eeg/i.test(filename) ? "eeg" : /right/i.test(filename) ? "right" : "left";
+    const duration = time[n - 1] - time[0];
     return {
       source: filename,
       source_path: "",
       fs_hz: fs,
       original_fs_hz: fs,
-      duration_s: time[n - 1] - time[0],
+      duration_s: duration,
       unit: "",
       time,
       sides: {
         [sideName]: {
+          kind: sideName === "eeg" ? "eeg" : "emg",
           names: chCols.map(({ h }, i) => h || `ch${i}`),
           channels,
           mean: channels.map((c) => mean(c)),
           std: channels.map((c) => std(c)),
+          time,
+          fs_hz: fs,
+          duration_s: duration,
         },
       },
     };
@@ -612,32 +1446,39 @@
 
   function ensureFiltered() {
     if (!state.data) return null;
-    const fs = Number(state.data.fs_hz);
-    const mode = state.filterMode;
-    if (
-      state.filterCache &&
-      state.filterCache.mode === mode &&
-      state.filterCache.fs === fs
-    ) {
+    const keys = activeSideKeys();
+    const cfg = state.filter;
+    const key = filterKey(cfg, keys);
+    if (state.filterCache && state.filterCache.key === key) {
       return state.filterCache;
     }
     const sides = {};
     let note = "原始信号";
     const t0 = performance.now();
-    for (const [side, block] of Object.entries(state.data.sides)) {
+    for (const side of keys) {
+      const block = state.data.sides[side];
+      const clock = effectiveClock(block);
+      const fs = clock.fs_hz;
       const channels = [];
       const means = [];
       const stds = [];
       for (const raw of block.channels) {
-        const { samples, note: n } = DSP.applyMode(raw, fs, mode);
+        const { samples, note: n } = DSP.applyFilter(raw, fs, cfg);
         note = n;
         channels.push(samples);
         means.push(mean(samples));
         stds.push(std(samples));
       }
-      sides[side] = { names: block.names, channels, mean: means, std: stds };
+      sides[side] = {
+        names: block.names,
+        channels,
+        mean: means,
+        std: stds,
+        time: clock.time,
+        fs_hz: fs,
+      };
     }
-    state.filterCache = { mode, fs, sides, note, ms: performance.now() - t0 };
+    state.filterCache = { key, sides, note, ms: performance.now() - t0 };
     return state.filterCache;
   }
 
@@ -662,7 +1503,8 @@
           index: i,
           name: block.names[i] || `${side[0].toUpperCase()}${i}`,
           samples,
-          color: COLORS[i % COLORS.length],
+          time: block.time,
+          color: channelColor(i),
           mean: block.mean[i] ?? mean(samples),
           std: block.std[i] ?? std(samples),
         });
@@ -684,7 +1526,7 @@
         chans.push({
           key,
           name: block.names[i] || `${side} ${i}`,
-          color: COLORS[i % COLORS.length],
+          color: channelColor(i),
         });
       });
     }
@@ -708,11 +1550,11 @@
 
   function clampWindow() {
     if (!state.data) return;
-    const dur = state.data.duration_s;
+    const dur = viewDuration();
     els.winSec.max = String(Math.max(0.5, dur));
     state.winSec = Math.min(state.winSec, dur);
     els.winSec.value = String(state.winSec);
-    const maxStart = Math.max(0, dur - state.winSec);
+    const maxStart = Math.min(5, Math.max(0, dur - state.winSec));
     els.tStart.max = String(maxStart);
     state.tStart = Math.min(Math.max(0, state.tStart), maxStart);
     els.tStart.value = String(state.tStart);
@@ -720,8 +1562,8 @@
     els.tStartLabel.textContent = `${state.tStart.toFixed(2)} s`;
   }
 
-  function indexRange(t0, t1) {
-    const t = state.data.time;
+  function indexRange(time, t0, t1) {
+    const t = time;
     let i0 = 0;
     let i1 = t.length - 1;
     while (i0 < t.length && t[i0] < t0) i0++;
@@ -747,6 +1589,8 @@
     let filterInfo = null;
     try {
       filterInfo = ensureFiltered();
+      const extra = state.data.loadNote ? ` · ${state.data.loadNote}` : "";
+      setStatus(`已加载 ${state.data.source}${extra}`);
     } catch (err) {
       setStatus(`滤波失败：${err.message}`, true);
       els.filterNote.textContent = err.message;
@@ -773,17 +1617,16 @@
     if (!chans.length) {
       ctx.fillStyle = "#8b9aab";
       ctx.fillText("请至少选择一个通道", padL, padT + 20);
+      scheduleSpectrum();
       return;
     }
 
     const t0 = state.tStart;
     const t1 = state.tStart + state.winSec;
-    const [i0, i1] = indexRange(t0, t1);
     const rowH = plotH / chans.length;
-    const t = state.data.time;
 
-    // warmup shade (~1 s) when filtering
-    if (state.filterMode !== "raw") {
+    // Warmup shade only when filtering without mirror padding (causal startup).
+    if (anyFilterOn(state.filter) && !state.filter.enableRaw && !state.filter.mirrorPad) {
       const warmEnd = Math.min(t1, 1.0);
       if (warmEnd > t0) {
         const x0 = padL;
@@ -819,6 +1662,8 @@
       let m = 0;
       let mn = Infinity;
       let mx = -Infinity;
+      const seriesTime = ch.time;
+      const [i0, i1] = indexRange(seriesTime, t0, t1);
       const dc = state.dcRemove ? ch.mean : 0;
       for (let i = i0; i <= i1; i++) {
         const v = ch.samples[i] - dc;
@@ -839,7 +1684,7 @@
       ctx.beginPath();
       let started = false;
       for (let i = i0; i <= i1; i++) {
-        const x = padL + ((t[i] - t0) / (t1 - t0)) * plotW;
+        const x = padL + ((seriesTime[i] - t0) / (t1 - t0)) * plotW;
         const y = mid - (ch.samples[i] - dc) * yScale;
         if (!started) {
           ctx.moveTo(x, y);
@@ -868,28 +1713,382 @@
     }
 
     els.statsBox.innerHTML = stats.join("") || "—";
+    scheduleSpectrum();
+  }
+
+  const MAX_NOTCHES = 8;
+
+  function renderNotchList() {
+    const notches = state.filter.notches || [];
+    els.notchList.innerHTML = notches
+      .map(
+        (n, i) => `
+      <div class="notch-row" data-i="${i}">
+        <span>陷波 ${i + 1}</span>
+        <input type="number" data-field="f0" min="0.5" max="1000" step="0.5" value="${n.f0}" />
+        <span class="param-unit">Hz</span>
+        <input type="number" data-field="bw" min="0.2" max="40" step="0.1" value="${n.bw}" />
+        <span class="param-unit">带宽</span>
+        <button type="button" class="ghost" data-remove="${i}" ${notches.length <= 1 ? "disabled" : ""}>删除</button>
+      </div>`
+      )
+      .join("");
+    if (els.addNotchBtn) els.addNotchBtn.disabled = notches.length >= MAX_NOTCHES;
+  }
+
+  function scheduleFilterRedraw() {
+    readFilterFromUi();
+    state.filterCache = null;
+    if (state.filterTimer) clearTimeout(state.filterTimer);
+    state.filterTimer = setTimeout(() => {
+      state.filterTimer = null;
+      draw();
+    }, 80);
+  }
+
+  function fftRadix2(re, im) {
+    const n = re.length;
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) {
+        let tmp = re[i];
+        re[i] = re[j];
+        re[j] = tmp;
+        tmp = im[i];
+        im[i] = im[j];
+        im[j] = tmp;
+      }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const ang = (-2 * Math.PI) / len;
+      const wlenRe = Math.cos(ang);
+      const wlenIm = Math.sin(ang);
+      for (let i = 0; i < n; i += len) {
+        let wr = 1;
+        let wi = 0;
+        const half = len >> 1;
+        for (let k = 0; k < half; k++) {
+          const ur = re[i + k];
+          const ui = im[i + k];
+          const vr = re[i + k + half] * wr - im[i + k + half] * wi;
+          const vi = re[i + k + half] * wi + im[i + k + half] * wr;
+          re[i + k] = ur + vr;
+          im[i + k] = ui + vi;
+          re[i + k + half] = ur - vr;
+          im[i + k + half] = ui - vi;
+          const nextRe = wr * wlenRe - wi * wlenIm;
+          wi = wr * wlenIm + wi * wlenRe;
+          wr = nextRe;
+        }
+      }
+    }
+  }
+
+  function floorPow2(n) {
+    let p = 1;
+    while ((p << 1) <= n) p <<= 1;
+    return p;
+  }
+
+  /** Welch PSD in dB over [i0, i1], ~1 s Hann segments, 50% overlap, at most 24 averages. */
+  function welchSpectrum(samples, i0, i1, fs, removeDc) {
+    const n = i1 - i0 + 1;
+    if (n < 32 || !(fs > 0)) return null;
+    const target = Math.min(n, Math.max(256, Math.round(fs)));
+    const nfft = floorPow2(Math.min(n, target));
+    if (nfft < 32) return null;
+    const window = new Float64Array(nfft);
+    for (let i = 0; i < nfft; i++) {
+      window[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (nfft - 1)));
+    }
+    const re = new Float64Array(nfft);
+    const im = new Float64Array(nfft);
+    const bins = nfft / 2 + 1;
+    const acc = new Float64Array(bins);
+    const hop = Math.max(1, nfft >> 1);
+    const last = i1 + 1 - nfft;
+    const starts = [];
+    if (last <= i0) starts.push(i0);
+    else {
+      const avail = Math.floor((last - i0) / hop) + 1;
+      const step = avail > 24 ? Math.floor((last - i0) / 23) : hop;
+      for (let s = i0; s < last; s += step) starts.push(s);
+      starts.push(last);
+    }
+    for (const start of starts) {
+      let mean = 0;
+      if (removeDc) {
+        for (let i = 0; i < nfft; i++) mean += samples[start + i];
+        mean /= nfft;
+      }
+      for (let i = 0; i < nfft; i++) {
+        re[i] = (samples[start + i] - mean) * window[i];
+        im[i] = 0;
+      }
+      fftRadix2(re, im);
+      for (let k = 0; k < bins; k++) acc[k] += re[k] * re[k] + im[k] * im[k];
+    }
+    const db = new Float64Array(bins);
+    const freqs = new Float64Array(bins);
+    for (let k = 0; k < bins; k++) {
+      freqs[k] = (k * fs) / nfft;
+      db[k] = 10 * Math.log10(acc[k] / starts.length + 1e-20);
+    }
+    return { freqs, db, df: fs / nfft, nfft, count: starts.length };
+  }
+
+  let specTimer = null;
+  function scheduleSpectrum() {
+    if (specTimer) clearTimeout(specTimer);
+    specTimer = setTimeout(() => {
+      specTimer = null;
+      drawSpectrum();
+    }, state.drag ? 160 : 0);
+  }
+
+  function drawSpectrum() {
+    if (!state.data) return;
+    const chans = activeChannels();
+    const dpr = window.devicePixelRatio || 1;
+    const rect = els.specCanvas.getBoundingClientRect();
+    const w = Math.max(320, Math.floor(rect.width));
+    const h = Math.max(120, Math.floor(rect.height));
+    els.specCanvas.width = Math.floor(w * dpr);
+    els.specCanvas.height = Math.floor(h * dpr);
+    specCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    specCtx.clearRect(0, 0, w, h);
+    specCtx.fillStyle = "#0c1015";
+    specCtx.fillRect(0, 0, w, h);
+    if (!chans.length) {
+      els.specNote.textContent = "无通道";
+      return;
+    }
+    const t0 = state.tStart;
+    const t1 = state.tStart + state.winSec;
+    const key = [
+      filterKey(state.filter, activeSideKeys()),
+      t0.toFixed(3),
+      state.winSec.toFixed(3),
+      state.dcRemove,
+      chans.map((c) => c.key).join(","),
+    ].join("|");
+    if (!state.specCache || state.specCache.key !== key) {
+      const series = [];
+      for (const ch of chans) {
+        const [i0, i1] = indexRange(ch.time, t0, t1);
+        const fs = effectiveClock(state.data.sides[ch.side]).fs_hz;
+        const spec = welchSpectrum(ch.samples, i0, i1, fs, state.dcRemove);
+        if (spec) series.push({ name: ch.name, color: ch.color, side: ch.side, ...spec });
+      }
+      state.specCache = { key, series };
+    }
+    const series = state.specCache.series;
+    if (!series.length) {
+      els.specNote.textContent = "窗口太短，无法估计频谱";
+      return;
+    }
+    const fs0 = effectiveClock(state.data.sides[series[0].side]).fs_hz;
+    const nyq = fs0 / 2;
+    const chosen = Number(state.specFmax) || 0;
+    const fmax = chosen > 0 ? Math.min(chosen, nyq) : nyq;
+    let curves = series;
+    if (state.specAvg && series.every((s) => s.db.length === series[0].db.length)) {
+      const bins = series[0].db.length;
+      const acc = new Float64Array(bins);
+      for (const s of series) {
+        for (let k = 0; k < bins; k++) acc[k] += 10 ** (s.db[k] / 10);
+      }
+      const db = new Float64Array(bins);
+      for (let k = 0; k < bins; k++) db[k] = 10 * Math.log10(acc[k] / series.length + 1e-20);
+      curves = [{ name: "平均", color: "#e7eef7", freqs: series[0].freqs, db }];
+    }
+    const padL = 46;
+    const padR = 12;
+    const padT = 16;
+    const padB = 22;
+    const plotW = w - padL - padR;
+    const plotH = h - padT - padB;
+    let peak = -Infinity;
+    let floor = Infinity;
+    let peakF = 0;
+    for (const curve of curves) {
+      for (let k = 0; k < curve.freqs.length; k++) {
+        const f = curve.freqs[k];
+        if (f > fmax) break;
+        if (f < 0.5) continue;
+        if (curve.db[k] > peak) {
+          peak = curve.db[k];
+          peakF = f;
+        }
+        if (curve.db[k] < floor) floor = curve.db[k];
+      }
+    }
+    if (!Number.isFinite(peak)) {
+      els.specNote.textContent = "无有效频点";
+      return;
+    }
+    floor = Math.max(floor, peak - 80);
+    const ySpan = Math.max(peak - floor, 10);
+    const yOf = (db) => padT + ((peak - db) / ySpan) * plotH;
+    const xOf = (f) => padL + (f / fmax) * plotW;
+
+    specCtx.strokeStyle = "#1c2733";
+    specCtx.lineWidth = 1;
+    specCtx.fillStyle = "#8b9aab";
+    specCtx.font = "11px IBM Plex Sans, sans-serif";
+    for (let g = 0; g <= 4; g++) {
+      const db = peak - (ySpan * g) / 4;
+      const y = yOf(db);
+      specCtx.beginPath();
+      specCtx.moveTo(padL, y);
+      specCtx.lineTo(padL + plotW, y);
+      specCtx.stroke();
+      specCtx.fillText(`${db.toFixed(0)}`, 4, y + 3);
+    }
+    for (let g = 0; g <= 4; g++) {
+      const f = (fmax * g) / 4;
+      const x = xOf(f);
+      specCtx.beginPath();
+      specCtx.moveTo(x, padT);
+      specCtx.lineTo(x, padT + plotH);
+      specCtx.stroke();
+      specCtx.fillText(`${f.toFixed(0)}`, x - 8, h - 6);
+    }
+
+    const bypass = !!state.filter.enableRaw || !anyFilterOn(state.filter);
+    if (!bypass) {
+      specCtx.save();
+      specCtx.strokeStyle = "rgba(224, 163, 91, 0.55)";
+      specCtx.setLineDash([3, 3]);
+      const marks = [];
+      if (state.filter.enableNotch) {
+        for (const n of state.filter.notches || []) marks.push(Number(n.f0));
+      }
+      if (state.filter.enableComb) {
+        const f0 = Number(state.filter.combF0);
+        for (let k = 1; k * f0 < fmax && k < 16; k++) marks.push(k * f0);
+      }
+      for (const f of marks) {
+        if (!(f > 0) || f > fmax) continue;
+        const x = xOf(f);
+        specCtx.beginPath();
+        specCtx.moveTo(x, padT);
+        specCtx.lineTo(x, padT + plotH);
+        specCtx.stroke();
+      }
+      specCtx.restore();
+    }
+
+    for (const curve of curves) {
+      specCtx.beginPath();
+      let started = false;
+      const cols = Math.max(1, Math.floor(plotW));
+      for (let col = 0; col < cols; col++) {
+        const fLo = (col / cols) * fmax;
+        const fHi = ((col + 1) / cols) * fmax;
+        let db = -Infinity;
+        for (let k = 0; k < curve.freqs.length; k++) {
+          const f = curve.freqs[k];
+          if (f < fLo) continue;
+          if (f > fHi) break;
+          if (curve.db[k] > db) db = curve.db[k];
+        }
+        if (!Number.isFinite(db)) continue;
+        const x = padL + ((col + 0.5) / cols) * plotW;
+        const y = yOf(db);
+        if (!started) {
+          specCtx.moveTo(x, y);
+          started = true;
+        } else specCtx.lineTo(x, y);
+      }
+      specCtx.strokeStyle = curve.color;
+      specCtx.lineWidth = 1.15;
+      specCtx.stroke();
+    }
+
+    if (state.specHover != null && state.specHover >= 0 && state.specHover <= fmax) {
+      const x = xOf(state.specHover);
+      specCtx.strokeStyle = "rgba(231, 238, 247, 0.45)";
+      specCtx.beginPath();
+      specCtx.moveTo(x, padT);
+      specCtx.lineTo(x, padT + plotH);
+      specCtx.stroke();
+      specCtx.fillStyle = "#e7eef7";
+      specCtx.fillText(`${state.specHover.toFixed(1)} Hz`, Math.min(x + 4, w - 64), padT + 12);
+    }
+
+    const legend = curves.slice(0, 6).map((c) => c.name).join("  ");
+    const more = curves.length > 6 ? ` +${curves.length - 6}` : "";
+    els.specNote.textContent = [
+      `Δf ${series[0].df.toFixed(2)} Hz`,
+      `${series[0].count} 段`,
+      `峰值 ${peakF.toFixed(1)} Hz`,
+      state.specAvg ? "平均" : legend + more,
+    ].join(" · ");
+    state.specGeom = { padL, plotW, fmax };
+  }
+
+  function preferredSide(sides) {
+    if (sides.left && sides.right) return "both";
+    if (sides.left) return "left";
+    if (sides.right) return "right";
+    if (sides.eeg) return "eeg";
+    return Object.keys(sides)[0] || "left";
+  }
+
+  function rebuildSideSelect() {
+    const sides = state.data?.sides || {};
+    const options = [];
+    if (sides.left) options.push(["left", "左手腕 EMG"]);
+    if (sides.right) options.push(["right", "右手腕 EMG"]);
+    if (sides.left && sides.right) options.push(["both", "双侧 EMG"]);
+    if (sides.eeg) options.push(["eeg", "EEG"]);
+    if (!options.length) options.push(["left", "左手腕 EMG"]);
+    els.sideSelect.innerHTML = options
+      .map(([value, label]) => `<option value="${value}">${label}</option>`)
+      .join("");
+    if (!options.some(([value]) => value === state.side)) state.side = options[0][0];
+    els.sideSelect.value = state.side;
+  }
+
+  function describeData(data) {
+    const labels = { left: "左腕 EMG", right: "右腕 EMG", eeg: "EEG" };
+    const parts = [data.source];
+    for (const key of ["left", "right", "eeg"]) {
+      const block = data.sides[key];
+      if (!block) continue;
+      const clock = effectiveClock(block);
+      const spacing = state.ignoreTimestamps ? " 均匀" : "";
+      parts.push(`${labels[key]} ${formatFs(clock.fs_hz)}${spacing} · ${block.channels.length} ch`);
+    }
+    if (data.duration_s != null) parts.push(`${Number(data.duration_s).toFixed(2)} s`);
+    if (data.unit) parts.push(data.unit);
+    return parts.join(" · ");
   }
 
   function loadData(data) {
     state.data = data;
     state.enabled = {};
     state.filterCache = null;
+    state.filterByKind = { emg: cloneFilter(DEFAULT_FILTER), eeg: cloneFilter(EEG_FILTER) };
     state.tStart = 0;
     state.winSec = Math.min(5, data.duration_s || 5);
-    const sides = Object.keys(data.sides);
-    state.side = sides.includes("left") ? "left" : sides[0];
-    els.sideSelect.value = state.side;
-    els.sourceMeta.textContent = [
-      data.source,
-      data.fs_hz ? `${Number(data.fs_hz).toFixed(0)} Hz` : null,
-      data.duration_s != null ? `${Number(data.duration_s).toFixed(2)} s` : null,
-      data.unit || null,
-    ]
-      .filter(Boolean)
-      .join(" · ");
-    rebuildChannelList();
-    draw();
-    setStatus(`已加载 ${data.source}`);
+    state.side = preferredSide(data.sides);
+    rebuildSideSelect();
+    applyKindFilter(currentKind());
+    els.sourceMeta.textContent = describeData(data);
+    updateLpSliderLimit();
+    setStatus(data.loadNote ? `正在滤波… ${data.loadNote}` : "正在滤波…");
+    requestAnimationFrame(() => {
+      try {
+        rebuildChannelList();
+        draw();
+      } catch (err) {
+        setStatus(`加载失败：${err.message}`, true);
+      }
+    });
   }
 
   async function loadSample() {
@@ -907,21 +2106,148 @@
     }
   }
 
-  function onFilterChange() {
-    state.filterMode = els.filterMode.value;
-    state.filterCache = null;
-    // DC remove less critical after HP/main, but keep user choice
-    draw();
-  }
-
   els.sideSelect.addEventListener("change", () => {
+    readFilterFromUi();
     state.side = els.sideSelect.value;
+    state.tStart = 0;
+    applyKindFilter(currentKind());
     rebuildChannelList();
     draw();
   });
-  els.filterMode.addEventListener("change", onFilterChange);
+  function anyStageChecked() {
+    return (
+      els.enHp.checked ||
+      els.enLp.checked ||
+      els.enBp.checked ||
+      els.enNotch.checked ||
+      els.enComb.checked
+    );
+  }
+
+  function onStageToggle(changed) {
+    // 原始 与 其它滤波互斥：开原始则关掉全部滤波；开任一滤波则关掉原始。
+    if (changed === "raw" && els.enRaw.checked) {
+      els.enHp.checked = false;
+      els.enLp.checked = false;
+      els.enBp.checked = false;
+      els.enNotch.checked = false;
+      els.enComb.checked = false;
+    } else if (changed !== "raw" && anyStageChecked()) {
+      els.enRaw.checked = false;
+    }
+    // 全部滤波关闭时自动回到原始
+    if (!anyStageChecked()) {
+      els.enRaw.checked = true;
+    }
+    updateParamVisibility();
+    updateChainHint();
+    scheduleFilterRedraw();
+  }
+
+  els.enRaw.addEventListener("change", () => onStageToggle("raw"));
+  els.enHp.addEventListener("change", () => onStageToggle("hp"));
+  els.enLp.addEventListener("change", () => onStageToggle("lp"));
+  els.enBp.addEventListener("change", () => onStageToggle("bp"));
+  els.enNotch.addEventListener("change", () => onStageToggle("notch"));
+  els.notchList.addEventListener("change", (ev) => {
+    const input = ev.target;
+    const row = input.closest?.(".notch-row");
+    const field = input.dataset?.field;
+    if (!row || !field) return;
+    const i = Number(row.dataset.i);
+    const value = Number(input.value);
+    if (!Number.isFinite(value) || !state.filter.notches[i]) return;
+    state.filter.notches[i][field] = value;
+    updateChainHint();
+    scheduleFilterRedraw();
+  });
+  els.notchList.addEventListener("click", (ev) => {
+    const btn = ev.target.closest?.("[data-remove]");
+    if (!btn || btn.disabled) return;
+    if (state.filter.notches.length <= 1) return;
+    state.filter.notches.splice(Number(btn.dataset.remove), 1);
+    renderNotchList();
+    updateChainHint();
+    scheduleFilterRedraw();
+  });
+  els.addNotchBtn.addEventListener("click", () => {
+    const list = state.filter.notches;
+    if (list.length >= MAX_NOTCHES) return;
+    const last = list[list.length - 1] || { f0: 0, bw: 2 };
+    list.push({ f0: Math.round(Math.min(1000, last.f0 + 50) * 10) / 10, bw: last.bw });
+    renderNotchList();
+    updateChainHint();
+    scheduleFilterRedraw();
+  });
+  els.specAvg.addEventListener("change", () => {
+    state.specAvg = els.specAvg.checked;
+    drawSpectrum();
+  });
+  els.specFmax.addEventListener("change", () => {
+    state.specFmax = Number(els.specFmax.value) || 0;
+    drawSpectrum();
+  });
+  els.specCanvas.addEventListener("pointermove", (ev) => {
+    const geom = state.specGeom;
+    if (!geom) return;
+    const rect = els.specCanvas.getBoundingClientRect();
+    const x = ev.clientX - rect.left;
+    const ratio = (x - geom.padL) / geom.plotW;
+    state.specHover = ratio >= 0 && ratio <= 1 ? ratio * geom.fmax : null;
+    drawSpectrum();
+  });
+  els.specCanvas.addEventListener("pointerleave", () => {
+    state.specHover = null;
+    drawSpectrum();
+  });
+  els.enComb.addEventListener("change", () => onStageToggle("comb"));
+  els.enMirrorPad.addEventListener("change", () => {
+    updateChainHint();
+    scheduleFilterRedraw();
+  });
+
+  function bindLinkedPair(rangeEl, numEl) {
+    rangeEl.addEventListener("input", () => {
+      setLinked(rangeEl, numEl, rangeEl.value);
+      scheduleFilterRedraw();
+    });
+    numEl.addEventListener("change", () => {
+      setLinked(rangeEl, numEl, numEl.value);
+      scheduleFilterRedraw();
+    });
+    numEl.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        setLinked(rangeEl, numEl, numEl.value);
+        scheduleFilterRedraw();
+        numEl.blur();
+      }
+    });
+  }
+  bindLinkedPair(els.hpHz, els.hpHzNum);
+  bindLinkedPair(els.lpHz, els.lpHzNum);
+  bindLinkedPair(els.combF0, els.combF0Num);
+  bindLinkedPair(els.combBw, els.combBwNum);
+
+  ["hpOrder", "lpOrder"].forEach((id) => {
+    els[id].addEventListener("change", scheduleFilterRedraw);
+  });
+  els.resetFilterBtn.addEventListener("click", () => {
+    const preset = state.kind === "eeg" ? EEG_FILTER : DEFAULT_FILTER;
+    state.filterByKind[state.kind] = cloneFilter(preset);
+    state.filter = cloneFilter(preset);
+    syncFilterUiFromState();
+    state.filterCache = null;
+    draw();
+  });
   els.dcRemove.addEventListener("change", () => {
     state.dcRemove = els.dcRemove.checked;
+    draw();
+  });
+  els.ignoreTimestamps.addEventListener("change", () => {
+    state.ignoreTimestamps = els.ignoreTimestamps.checked;
+    state.filterCache = null;
+    state.specCache = null;
+    if (state.data) els.sourceMeta.textContent = describeData(state.data);
     draw();
   });
   els.winSec.addEventListener("input", () => {
@@ -938,6 +2264,81 @@
     draw();
   });
   els.loadSampleBtn.addEventListener("click", loadSample);
+
+  let parquetApiPromise = null;
+  function parquetApi() {
+    if (!parquetApiPromise) parquetApiPromise = import("./parquet_loader.js");
+    return parquetApiPromise;
+  }
+
+  async function loadParquetSelection(fileList, { folder }) {
+    const api = await parquetApi();
+    const files = [...fileList];
+    let jobs = [];
+    let source = "";
+    let loadNote = "";
+    if (folder) {
+      const groups = api.pickEpisodeGroups(files);
+      const usable = groups.filter((group) => group.files.left || group.files.right);
+      if (!usable.length) {
+        throw new Error(
+          "未找到 observation.left_wrist_emg.parquet 或 observation.right_wrist_emg.parquet"
+        );
+      }
+      const chosen = usable[0];
+      if (usable.length > 1) {
+        loadNote = `发现 ${usable.length} 个目录，已加载 ${chosen.dir || "第一个"}`;
+      }
+      const loadedNames = ["left", "right", "eeg"]
+        .filter((role) => chosen.files[role])
+        .map((role) => chosen.files[role].name);
+      source = chosen.dir ? `${chosen.dir} · ${loadedNames.join(" + ")}` : loadedNames.join(" + ");
+      jobs = Object.entries(chosen.files);
+    } else {
+      const parquetFiles = files.filter((file) => /\.parquet$/i.test(file.name));
+      const chosenFiles = parquetFiles.length ? parquetFiles : files;
+      if (!chosenFiles.length) throw new Error("请选择 parquet 文件");
+      source = chosenFiles.map((file) => file.name).join(" + ");
+      jobs = chosenFiles.map((file) => [null, file]);
+    }
+    const sides = {};
+    for (const [roleHint, file] of jobs) {
+      setStatus(`正在读取 ${file.name} …`);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const table = await api.readParquetTable(await file.arrayBuffer());
+      const parsed = api.streamFromTable(table, file.name, roleHint);
+      sides[parsed.role] = parsed.block;
+    }
+    const data = api.datasetFromSides(source, sides);
+    data.loadNote = loadNote;
+    loadData(data);
+  }
+
+  els.openDirBtn.addEventListener("click", () => els.dirInput.click());
+  els.openParquetBtn.addEventListener("click", () => els.parquetInput.click());
+  els.openFileBtn.addEventListener("click", () => els.fileInput.click());
+  els.dirInput.addEventListener("change", async () => {
+    const files = els.dirInput.files;
+    if (!files?.length) return;
+    try {
+      await loadParquetSelection(files, { folder: true });
+    } catch (err) {
+      setStatus(`文件夹导入失败：${err.message}`, true);
+    } finally {
+      els.dirInput.value = "";
+    }
+  });
+  els.parquetInput.addEventListener("change", async () => {
+    const files = els.parquetInput.files;
+    if (!files?.length) return;
+    try {
+      await loadParquetSelection(files, { folder: false });
+    } catch (err) {
+      setStatus(`Parquet 导入失败：${err.message}`, true);
+    } finally {
+      els.parquetInput.value = "";
+    }
+  });
   els.fileInput.addEventListener("change", async () => {
     const file = els.fileInput.files?.[0];
     if (!file) return;
@@ -950,6 +2351,8 @@
       }
     } catch (err) {
       setStatus(`文件解析失败：${err.message}`, true);
+    } finally {
+      els.fileInput.value = "";
     }
   });
 
@@ -963,7 +2366,7 @@
     const plotW = rect.width - padL - padR;
     const xRatio = Math.min(1, Math.max(0, (ev.clientX - rect.left - padL) / plotW));
     const anchor = state.tStart + state.winSec * xRatio;
-    state.winSec = Math.min(state.data.duration_s, Math.max(0.5, state.winSec * factor));
+    state.winSec = Math.min(viewDuration(), Math.max(0.5, state.winSec * factor));
     state.tStart = anchor - state.winSec * xRatio;
     draw();
   }, { passive: false });
@@ -989,15 +2392,17 @@
   });
   els.canvas.addEventListener("pointerup", () => {
     state.drag = null;
+    scheduleSpectrum();
   });
   els.canvas.addEventListener("dblclick", () => {
     if (!state.data) return;
     state.tStart = 0;
-    state.winSec = Math.min(5, state.data.duration_s);
+    state.winSec = Math.min(5, viewDuration());
     draw();
   });
 
   window.addEventListener("resize", () => draw());
+  syncFilterUiFromState();
   loadSample();
 })();
   </script>

@@ -3,12 +3,15 @@
 from .core import DenoisedBlock, DenoiserConfig, RealtimeEMGDenoiser
 from .features import FeatureFrame, StreamingFeatures, rms, spectral_features
 from .qualification import WaveletQualification, evaluate_wavelet
+from .timebase import TimebaseReport, rebuild_timestamps
 from .wavelet import WaveletCalibration, calibrate_noise
 
 __all__ = [
     "DenoisedBlock",
     "DenoiserConfig",
     "RealtimeEMGDenoiser",
+    "TimebaseReport",
+    "rebuild_timestamps",
     "FeatureFrame",
     "StreamingFeatures",
     "rms",

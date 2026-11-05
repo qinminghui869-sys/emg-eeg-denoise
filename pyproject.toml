@@ -9,6 +9,7 @@ description = "Stateful 2 kHz sEMG denoising with a 50 Hz IIR comb and gated SWT
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.26,<3", "scipy>=1.11,<2", "PyWavelets>=1.5,<2"]
+
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -25,10 +26,12 @@ Repository = "https://github.com/qinminghui869-sys/emg-denoise"
 Issues = "https://github.com/qinminghui869-sys/emg-denoise/issues"
 
 [project.optional-dependencies]
-test = ["pytest>=8,<10", "pytest-cov>=6,<8"]
+parquet = ["pyarrow>=14,<25"]
+test = ["pytest>=8,<10", "pytest-cov>=6,<8", "pyarrow>=14,<25"]
 dev = [
     "pytest>=8,<10",
     "pytest-cov>=6,<8",
+    "pyarrow>=14,<25",
     "ruff>=0.9,<1",
     "mypy>=1.13,<2",
     "build>=1.2,<2",
@@ -64,7 +67,7 @@ files = ["src/emg_denoise"]
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["scipy.*", "pywt.*"]
+module = ["scipy.*", "pywt.*", "pyarrow.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]
