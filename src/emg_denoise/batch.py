@@ -5,6 +5,9 @@ Acquisition layouts repeat the same file name across sessions, for example
 those into one output directory would silently overwrite all but the last file,
 so every output keeps its path relative to the inputs' common parent.
 
+``--inplace`` instead renames each matched parquet to ``*.bak`` and writes the
+rebuilt parquet under the original name.
+
 Each recording is processed independently: one failure is reported and the batch
 continues, so a single malformed file cannot discard the rest of the run.
 """
@@ -30,7 +33,7 @@ class BatchOptions:
     """Patterns and parameters for one batch run."""
 
     patterns: tuple[str, ...]
-    output_dir: Path
+    output_dir: Path | None = None
     rate_hz: float | None = None
     tick_us: float | None = None
     non_negative: bool = True
@@ -40,10 +43,14 @@ class BatchOptions:
     calibration: Path | None = None
     #: Overwrite outputs that already exist instead of refusing.
     force: bool = False
+    #: Rebuild matched parquet files in place (``source`` → ``source.bak``).
+    inplace: bool = False
 
     @property
     def report_path(self) -> Path:
-        return self.output_dir / "batch.json"
+        if self.output_dir is not None:
+            return self.output_dir / "batch.json"
+        return Path("batch.json")
 
 
 def _is_derived(path: str) -> bool:
@@ -93,8 +100,9 @@ def destination(source: Path, root: Path, output_dir: Path) -> Path:
     return output_dir / relative / source.stem
 
 
-def _process_one(source: Path, target: Path, options: BatchOptions) -> dict[str, Any]:
-    """Run stage one, and stage two when requested, for a single recording."""
+def _process_one_mirrored(source: Path, target: Path, options: BatchOptions) -> dict[str, Any]:
+    """Run stage one, and stage two when requested, into a mirrored output directory."""
+    assert options.output_dir is not None
     retimed = target / "retimed.csv"
     if retimed.exists() and not options.force:
         raise ValueError(f"output exists; pass --force to overwrite: {retimed}")
@@ -107,6 +115,7 @@ def _process_one(source: Path, target: Path, options: BatchOptions) -> dict[str,
             rate_hz=float(FS) if options.rate_hz is None else options.rate_hz,
             tick_us=options.tick_us,
             non_negative=options.non_negative,
+            force=options.force,
         )
     )
     entry: dict[str, Any] = {
@@ -147,23 +156,62 @@ def _process_one(source: Path, target: Path, options: BatchOptions) -> dict[str,
     return entry
 
 
+def _process_one_inplace(source: Path, options: BatchOptions) -> dict[str, Any]:
+    """Rebuild one parquet recording under its own path, keeping a ``.bak`` copy."""
+    if options.denoise:
+        raise ValueError("--inplace cannot be combined with --denoise; stage two still needs CSV")
+    stage_one = run_retime(
+        RetimeOptions(
+            source=source,
+            inplace=True,
+            rate_hz=float(FS) if options.rate_hz is None else options.rate_hz,
+            tick_us=options.tick_us,
+            non_negative=options.non_negative,
+            force=options.force,
+        )
+    )
+    return {
+        "input": str(source),
+        "retimed": str(source),
+        "backup": stage_one["backup"],
+        "samples": stage_one["samples"],
+        "channels": stage_one["channels"],
+        "measured_rate_hz": stage_one["measured_rate_hz"],
+        "resync_segments": stage_one["resync_segments"],
+        "max_offset_us": stage_one["max_offset_us"],
+        "warnings": stage_one["warnings"],
+    }
+
+
 def run_batch(options: BatchOptions) -> dict[str, Any]:
     """Process every matched recording, continuing past individual failures."""
+    if options.inplace and options.denoise:
+        raise ValueError("--inplace cannot be combined with --denoise; stage two still needs CSV")
+    if not options.inplace and options.output_dir is None:
+        raise ValueError("--output-dir is required unless --inplace is set")
+
     inputs = resolve_inputs(options.patterns)
     root = mirror_root(inputs)
     processed: list[dict[str, Any]] = []
     failed: list[dict[str, str]] = []
 
     for source in inputs:
-        target = destination(source, root, options.output_dir)
         try:
-            processed.append(_process_one(source, target, options))
+            if options.inplace:
+                processed.append(_process_one_inplace(source, options))
+            else:
+                assert options.output_dir is not None
+                target = destination(source, root, options.output_dir)
+                processed.append(_process_one_mirrored(source, target, options))
         except (ValueError, OSError, KeyError, TypeError) as error:
             failed.append({"input": str(source), "error": str(error)})
 
     flagged = [entry["input"] for entry in processed if entry["warnings"]]
+    report_path = options.report_path
+    if options.inplace and options.output_dir is None:
+        report_path = root / "batch.json"
     payload: dict[str, Any] = {
-        "report": str(options.report_path),
+        "report": str(report_path),
         "root": str(root),
         "matched": len(inputs),
         "succeeded": len(processed),
@@ -171,13 +219,19 @@ def run_batch(options: BatchOptions) -> dict[str, Any]:
         "flagged": len(flagged),
         "total_samples": sum(int(entry["samples"]) for entry in processed),
         "denoised": options.denoise,
+        "inplace": options.inplace,
         "recordings": processed,
         "failures": failed,
         "note": (
-            "Outputs mirror each input's path relative to root, because acquisition "
-            "layouts reuse file names across sessions."
+            "In-place mode renames each parquet to *.bak and writes the rebuild as "
+            "the original name."
+            if options.inplace
+            else (
+                "Outputs mirror each input's path relative to root, because acquisition "
+                "layouts reuse file names across sessions."
+            )
         ),
     }
-    options.output_dir.mkdir(parents=True, exist_ok=True)
-    dump_json(options.report_path, payload)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    dump_json(report_path, payload)
     return payload

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -169,6 +170,56 @@ def test_retime_rejects_an_output_that_would_clobber_the_source(tmp_path):
     write_acquisition_csv(source, samples=100, channels=1)
     with pytest.raises(ValueError, match="distinct"):
         run_retime(RetimeOptions(source=source, output=source))
+
+
+def test_inplace_retime_backs_up_and_rewrites_parquet(tmp_path):
+    source = tmp_path / "observation.left_wrist_emg.parquet"
+    write_acquisition_parquet(source, samples=4000, channels=2)
+    original = source.read_bytes()
+    payload = run_retime(RetimeOptions(source=source, inplace=True))
+
+    backup = Path(f"{source}.bak")
+    assert backup.is_file()
+    assert backup.read_bytes() == original
+    assert source.is_file()
+    assert payload["backup"] == str(backup)
+    assert payload["warnings"] == []
+
+    rebuilt = load_acquisition(source)
+    assert np.abs(np.diff(rebuilt.timestamps) - PERIOD_S).max() < 1e-12
+    assert np.array_equal(rebuilt.samples, load_acquisition(backup).samples)
+    assert "episode_index" not in rebuilt.channel_names
+    assert list(rebuilt.extras) == ["episode_index"]
+
+
+def test_inplace_refuses_an_existing_backup_without_force(tmp_path):
+    source = tmp_path / "observation.left_wrist_emg.parquet"
+    write_acquisition_parquet(source, samples=200, channels=1)
+    run_retime(RetimeOptions(source=source, inplace=True))
+    with pytest.raises(ValueError, match="backup exists"):
+        run_retime(RetimeOptions(source=source, inplace=True))
+
+
+def test_inplace_force_keeps_the_original_backup(tmp_path):
+    source = tmp_path / "observation.left_wrist_emg.parquet"
+    write_acquisition_parquet(source, samples=800, channels=1)
+    run_retime(RetimeOptions(source=source, inplace=True))
+    backup_bytes = Path(f"{source}.bak").read_bytes()
+    first = load_acquisition(source).timestamps.copy()
+    run_retime(RetimeOptions(source=source, inplace=True, force=True))
+    assert Path(f"{source}.bak").read_bytes() == backup_bytes
+    assert np.allclose(load_acquisition(source).timestamps, first)
+
+
+def test_parquet_output_path_writes_parquet(tmp_path):
+    source = tmp_path / "raw.parquet"
+    output = tmp_path / "retimed.parquet"
+    write_acquisition_parquet(source, samples=600, channels=2)
+    run_retime(RetimeOptions(source=source, output=output))
+    rebuilt = load_acquisition(output)
+    assert np.abs(np.diff(rebuilt.timestamps) - PERIOD_S).max() < 1e-12
+    assert source.is_file()
+    assert not Path(f"{source}.bak").exists()
 
 
 def test_retime_rejects_a_recording_without_a_timestamp_column(tmp_path):

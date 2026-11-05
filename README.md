@@ -60,7 +60,11 @@ emg-denoise process artifacts/noisy.csv --output artifacts/denoised.csv \
 # 阶段一：重建时间戳（parquet 或 CSV -> 均匀时基 CSV）
 emg-denoise retime observation.left_wrist_emg.parquet --output retimed.csv
 
-# 阶段二：去噪
+# 或就地写回 parquet：源文件改名为 *.bak，重建结果写回原文件名
+emg-denoise retime observation.left_wrist_emg.parquet --inplace
+emg-denoise retime observation.right_wrist_emg.parquet --inplace
+
+# 阶段二：去噪（仍读 CSV；就地 parquet 需另导出或先 --output retimed.csv）
 emg-denoise process retimed.csv --output denoised.csv
 ```
 
@@ -108,13 +112,20 @@ python -m pip install -e '.[parquet]'
 `batch` 对匹配到的每个文件依次执行两阶段，一个文件失败不影响其余：
 
 ```bash
-# 仅重建时间戳
+# 仅重建时间戳（写出镜像目录下的 retimed.csv）
 emg-denoise batch '数据集/L3-*/data/chunk-000/episode_*/observation.*_wrist_emg.parquet' \
   --output-dir out/
+
+# 就地重建两个腕部 parquet：各自改名为 *.bak，重建结果写回原文件名
+emg-denoise batch \
+  '数据集/L3-002-.../episode_000000/observation.*_wrist_emg.parquet' \
+  --inplace
 
 # 重建并去噪
 emg-denoise batch '数据集/**/observation.*_wrist_emg.parquet' --output-dir out/ --denoise
 ```
+
+`--inplace` 与 `--denoise` 不能同时使用。已有 `*.bak` 时需加 `--force`（不会覆盖原有 `.bak`，只重写重建结果）。
 
 输出按输入相对于公共父目录的路径镜像，每个录制一个子目录：
 

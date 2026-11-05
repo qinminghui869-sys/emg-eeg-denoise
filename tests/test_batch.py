@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -229,3 +230,40 @@ def test_cli_batch_rejects_unmatched_inputs(tmp_path):
     assert (
         main(["batch", str(tmp_path / "none/*.parquet"), "--output-dir", str(tmp_path / "o")]) == 2
     )
+
+
+def test_inplace_batch_rewrites_matched_parquets(tmp_path):
+    sources = build_session_tree(tmp_path / "raw", sessions=("L3-002",), sides=("left", "right"))
+    originals = {path: path.read_bytes() for path in sources}
+    payload = run_batch(
+        BatchOptions(patterns=(str(tmp_path / "raw/**/*.parquet"),), inplace=True)
+    )
+    assert payload["succeeded"] == 2
+    assert payload["inplace"] is True
+    for path in sources:
+        backup = Path(f"{path}.bak")
+        assert backup.read_bytes() == originals[path]
+        assert path.is_file()
+        assert path.stat().st_size > 0
+    assert (sources[0].parent / "batch.json").is_file()
+
+
+def test_inplace_batch_rejects_denoise(tmp_path):
+    build_session_tree(tmp_path / "raw", sessions=("L3-002",), sides=("left",))
+    with pytest.raises(ValueError, match="cannot be combined"):
+        run_batch(
+            BatchOptions(
+                patterns=(str(tmp_path / "raw/**/*.parquet"),),
+                inplace=True,
+                denoise=True,
+            )
+        )
+
+
+def test_cli_inplace_batch(tmp_path, capsys):
+    build_session_tree(tmp_path / "raw", sessions=("L3-002",), sides=("left", "right"))
+    exit_code = main(["batch", str(tmp_path / "raw/**/*.parquet"), "--inplace"])
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["succeeded"] == 2
+    assert payload["inplace"] is True

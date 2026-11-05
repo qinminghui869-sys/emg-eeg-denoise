@@ -9,6 +9,7 @@
 - 浏览页改为 EMG & EEG Viewer：可导入 episode 文件夹中的左右腕 EMG parquet，以及 EEG parquet。
 - 浏览页可同时串联多个陷波，并显示当前窗口的频谱。
 - 浏览页的陷波和梳状改为周期延拓。低截止高通留下的工频在端点被镜像折返时，不再振铃约 1 秒。
+- `retime` / `batch` 支持 `--inplace`：源 parquet 改名为 `*.bak`，均匀时基结果写回原文件名；也可 `--output *.parquet` 写出新的 parquet。
 
 ## 0.1.0
 
