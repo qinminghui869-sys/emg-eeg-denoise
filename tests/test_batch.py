@@ -40,7 +40,7 @@ def test_outputs_do_not_collide_for_identically_named_inputs(tmp_path):
     assert payload["failed"] == 0
     retimed = {entry["retimed"] for entry in payload["recordings"]}
     assert len(retimed) == 4
-    assert len(list((tmp_path / "out").rglob("retimed.csv"))) == 4
+    assert len(list((tmp_path / "out").rglob("retimed.parquet"))) == 4
 
 
 def test_mirrored_output_keeps_the_session_directory(tmp_path):
@@ -49,7 +49,7 @@ def test_mirrored_output_keeps_the_session_directory(tmp_path):
         BatchOptions(patterns=(str(tmp_path / "raw/**/*.parquet"),), output_dir=tmp_path / "out")
     )
     produced = sorted(
-        str(p.relative_to(tmp_path / "out")) for p in (tmp_path / "out").rglob("retimed.csv")
+        str(p.relative_to(tmp_path / "out")) for p in (tmp_path / "out").rglob("retimed.parquet")
     )
     assert any("L3-002" in path for path in produced)
     assert any("L3-003" in path for path in produced)
@@ -68,7 +68,7 @@ def test_batch_runs_both_stages_when_denoising(tmp_path):
     # A rebuilt axis must not look discontinuous to the streaming engine.
     assert entry["segments"] == 1
     assert entry["warnings"] == []
-    assert (tmp_path / "out").rglob("denoised.csv")
+    assert list((tmp_path / "out").rglob("denoised.parquet"))
 
 
 def test_existing_denoised_output_is_refused_without_force(tmp_path):
@@ -79,7 +79,7 @@ def test_existing_denoised_output_is_refused_without_force(tmp_path):
         denoise=True,
     )
     assert run_batch(options)["succeeded"] == 1
-    # retimed.csv is refused first, so force it through to reach stage two's guard.
+    # retimed.parquet is refused first, so force it through to reach stage two's guard.
     forced = BatchOptions(
         patterns=options.patterns, output_dir=options.output_dir, denoise=True, force=False
     )
@@ -209,11 +209,30 @@ def test_destination_keeps_the_input_stem(tmp_path):
 def test_cli_batch_reports_success(tmp_path, capsys):
     build_session_tree(tmp_path / "raw", sessions=("L3-002",), sides=("left", "right"))
     exit_code = main(
-        ["batch", str(tmp_path / "raw/**/*.parquet"), "--output-dir", str(tmp_path / "out")]
+        [
+            "batch",
+            "--json",
+            str(tmp_path / "raw/**/*.parquet"),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ]
     )
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
     assert payload["succeeded"] == 2
+
+
+def test_cli_batch_prints_a_readable_summary_by_default(tmp_path, capsys):
+    build_session_tree(tmp_path / "raw", sessions=("L3-002",), sides=("left",))
+    exit_code = main(
+        ["batch", str(tmp_path / "raw/**/*.parquet"), "--output-dir", str(tmp_path / "out")]
+    )
+    text = capsys.readouterr().out
+    assert exit_code == 0
+    assert "batch summary" in text
+    assert "succeeded=1" in text
+    assert "OK" in text
+    assert "observation.left_wrist_emg.parquet" in text
 
 
 def test_cli_batch_fails_acceptance_when_a_recording_is_flagged(tmp_path, capsys):
@@ -221,6 +240,7 @@ def test_cli_batch_fails_acceptance_when_a_recording_is_flagged(tmp_path, capsys
     exit_code = main(
         [
             "batch",
+            "--json",
             str(tmp_path / "raw/**/*.parquet"),
             "--output-dir",
             str(tmp_path / "out"),
@@ -254,21 +274,27 @@ def test_inplace_batch_rewrites_matched_parquets(tmp_path):
     assert (sources[0].parent / "batch.json").is_file()
 
 
-def test_inplace_batch_rejects_denoise(tmp_path):
-    build_session_tree(tmp_path / "raw", sessions=("L3-002",), sides=("left",))
-    with pytest.raises(ValueError, match="cannot be combined"):
-        run_batch(
-            BatchOptions(
-                patterns=(str(tmp_path / "raw/**/*.parquet"),),
-                inplace=True,
-                denoise=True,
-            )
+def test_inplace_batch_with_denoise_writes_sibling_parquet(tmp_path):
+    build_session_tree(tmp_path / "raw", sessions=("L3-002",), sides=("left",), samples=4000)
+    sources = sorted((tmp_path / "raw").rglob("*.parquet"))
+    payload = run_batch(
+        BatchOptions(
+            patterns=(str(tmp_path / "raw/**/*.parquet"),),
+            inplace=True,
+            denoise=True,
+            sidecar=True,
         )
+    )
+    assert payload["succeeded"] == 1
+    denoised = sources[0].with_name(f"{sources[0].stem}.denoised.parquet")
+    assert Path(payload["recordings"][0]["denoised"]) == denoised
+    assert denoised.is_file()
+    assert Path(f"{denoised}.report.json").is_file()
 
 
 def test_cli_inplace_batch(tmp_path, capsys):
     build_session_tree(tmp_path / "raw", sessions=("L3-002",), sides=("left", "right"))
-    exit_code = main(["batch", str(tmp_path / "raw/**/*.parquet"), "--inplace"])
+    exit_code = main(["batch", "--json", str(tmp_path / "raw/**/*.parquet"), "--inplace"])
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
     assert payload["succeeded"] == 2

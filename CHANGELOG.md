@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- 文件级 `process` / `batch --denoise` 默认改用与 Viewer 相同的离线链路（镜像 padding + filtfilt + 梳状/陷波周期延拓 + 端点消振），减轻首尾振铃；`--causal` 可切回原流式因果路径。`RealtimeDenoiser` API 不变。
+- 诊断默认写入会话 `meta/info.json`（时基字段 + `<feature>.denoised`）；`.timebase.json` / `.report.json` 改为可选 `--sidecar`。新增 `meta-backfill` 从 sidecar 回填并删除。
+- CLI 默认打印可读摘要（`batch` / `retime` / `process`）；需要机器解析时加 `--json`。批量总览仍写 `batch.json`。
+- 阶段二 `process` 支持 parquet 输入；默认在同目录写出 `<stem>.denoised.parquet`（CSV 同理为 `.denoised.csv`）；输出含 `valid` / `segment_id`，并保留元数据列。
+- `batch --inplace --denoise` 可用：就地重建后在旁写出去噪 parquet。
 - 项目更名为 `emg-eeg-denoise`（包 `emg_eeg_denoise`，CLI `emg-eeg-denoise` / `eed`）；源码按 `dsp/` 与 `pipeline/` 分组；浏览页改为 `viz/viewer.html`。
 - 重构为四项能力：EMG 时基重建、EMG 去噪（20/450/梳状 50 Hz）、EEG 去噪（0.5/50/陷波 50 Hz）、以及 EMG & EEG Viewer。
 - 新增因果 EEG 链路与 `--modality emg|eeg|auto`；`process` / `batch` 同时支持流式与离线批处理。

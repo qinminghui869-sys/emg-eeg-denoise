@@ -3,7 +3,7 @@
 Reads an acquisition parquet (or CSV), replaces the tick-quantized timestamps
 with a uniform axis, and writes either:
 
-- a ``timestamp,channel...`` CSV for stage two (``emg-eeg-denoise process``), or
+- a ``timestamp,channel...`` CSV or parquet for stage two (``emg-eeg-denoise process``), or
 - a parquet that keeps the acquisition schema (``--inplace`` or ``.parquet`` output).
 
 In-place mode renames the source to ``<source>.bak`` and writes the rebuilt file
@@ -50,6 +50,10 @@ class RetimeOptions:
     #: Allow overwriting an existing ``.bak`` refusal when re-running in place,
     #: and allow replacing an existing non-inplace output.
     force: bool = False
+    #: Write ``<output>.timebase.json`` beside the recording (off by default).
+    sidecar: bool = False
+    #: Merge diagnostics into the enclosing LeRobot ``meta/info.json`` when present.
+    update_meta: bool = True
 
     @property
     def destination(self) -> Path:
@@ -87,7 +91,10 @@ class RetimeOptions:
             return
         if self.output is None:
             raise ValueError("output is required unless --inplace is set")
-        validate_output_paths([source], [self.destination, self.report_path])
+        outputs = [self.destination]
+        if self.sidecar:
+            outputs.append(self.report_path)
+        validate_output_paths([source], outputs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,7 +326,14 @@ def run_retime(options: RetimeOptions) -> dict[str, Any]:
         _write_recording(destination, timestamps, acquisition)
 
     payload = _payload(options, acquisition, report)
-    dump_json(options.report_path, payload)
+    if options.sidecar:
+        dump_json(options.report_path, payload)
+    if options.update_meta:
+        from .meta import register_recording_meta
+
+        info = register_recording_meta(options.source, retime_payload=payload)
+        if info is not None:
+            payload["info"] = str(info)
     return payload
 
 
@@ -330,7 +344,7 @@ def _payload(
     return {
         "output": str(options.destination),
         "backup": str(options.backup_path) if options.inplace else None,
-        "report": str(options.report_path),
+        "report": str(options.report_path) if options.sidecar else None,
         "samples": report.samples,
         "channels": len(acquisition.channel_names),
         "channel_names": list(acquisition.channel_names),

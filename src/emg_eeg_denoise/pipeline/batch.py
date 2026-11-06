@@ -6,7 +6,8 @@ those into one output directory would silently overwrite all but the last file,
 so every output keeps its path relative to the inputs' common parent.
 
 ``--inplace`` instead renames each matched parquet to ``*.bak`` and writes the
-rebuilt parquet under the original name.
+rebuilt parquet under the original name. With ``--denoise``, stage two then writes
+``<stem>.denoised.parquet`` beside that rebuilt file.
 
 Each recording is processed independently: one failure is reported and the batch
 continues, so a single malformed file cannot discard the rest of the run.
@@ -21,11 +22,11 @@ from typing import Any
 
 from ..dsp.filters import Modality, infer_modality, modality_preset
 from ..io import dump_json
-from .replay import ReplayOptions, run_replay
+from .replay import ReplayOptions, default_process_output, run_replay
 from .retime import RetimeOptions, run_retime
 
 #: Suffixes excluded from inputs so reruns never consume their own outputs.
-DERIVED_SUFFIXES = (".timebase.json", ".report.json", ".bak")
+DERIVED_SUFFIXES = (".timebase.json", ".report.json", ".bak", ".denoised.parquet", ".denoised.pq")
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,12 @@ class BatchOptions:
     force: bool = False
     #: Rebuild matched parquet files in place (``source`` → ``source.bak``).
     inplace: bool = False
+    #: Write per-file ``.timebase.json`` / ``.report.json`` sidecars.
+    sidecar: bool = False
+    #: Merge diagnostics into each session's ``meta/info.json`` when present.
+    update_meta: bool = True
+    #: Stage-two causal stream instead of viewer-style offline filtfilt.
+    causal: bool = False
 
     @property
     def report_path(self) -> Path:
@@ -114,7 +121,10 @@ def _process_one_mirrored(source: Path, target: Path, options: BatchOptions) -> 
     """Run stage one, and stage two when requested, into a mirrored output directory."""
     assert options.output_dir is not None
     modality = _modality_for(source, options)
-    retimed = target / "retimed.csv"
+    retimed_name = (
+        "retimed.parquet" if source.suffix.lower() in {".parquet", ".pq"} else "retimed.csv"
+    )
+    retimed = target / retimed_name
     if retimed.exists() and not options.force:
         raise ValueError(f"output exists; pass --force to overwrite: {retimed}")
     target.mkdir(parents=True, exist_ok=True)
@@ -127,6 +137,8 @@ def _process_one_mirrored(source: Path, target: Path, options: BatchOptions) -> 
             tick_us=options.tick_us,
             non_negative=options.non_negative,
             force=options.force,
+            sidecar=options.sidecar,
+            update_meta=options.update_meta,
         )
     )
     entry: dict[str, Any] = {
@@ -140,14 +152,26 @@ def _process_one_mirrored(source: Path, target: Path, options: BatchOptions) -> 
         "max_offset_us": stage_one["max_offset_us"],
         "warnings": stage_one["warnings"],
     }
+    if stage_one.get("info"):
+        entry["info"] = stage_one["info"]
     if not options.denoise:
         return entry
 
-    denoised = target / "denoised.csv"
+    if retimed.suffix.lower() in {".parquet", ".pq"}:
+        denoised = target / "denoised.parquet"
+    else:
+        denoised = target / "denoised.csv"
     if denoised.exists() and not options.force:
         raise ValueError(f"output exists; pass --force to overwrite: {denoised}")
     stage_two = run_replay(
-        ReplayOptions(source=retimed, output=denoised, modality=modality)
+        ReplayOptions(
+            source=retimed,
+            output=denoised,
+            modality=modality,
+            sidecar=options.sidecar,
+            update_meta=options.update_meta,
+            causal=options.causal,
+        )
     )
     entry["denoised"] = str(denoised)
     entry["segments"] = stage_two["segments"]
@@ -164,9 +188,7 @@ def _process_one_mirrored(source: Path, target: Path, options: BatchOptions) -> 
 
 
 def _process_one_inplace(source: Path, options: BatchOptions) -> dict[str, Any]:
-    """Rebuild one parquet recording under its own path, keeping a ``.bak`` copy."""
-    if options.denoise:
-        raise ValueError("--inplace cannot be combined with --denoise; stage two still needs CSV")
+    """Rebuild one parquet under its own path; optionally denoise beside it."""
     modality = _modality_for(source, options)
     stage_one = run_retime(
         RetimeOptions(
@@ -176,9 +198,11 @@ def _process_one_inplace(source: Path, options: BatchOptions) -> dict[str, Any]:
             tick_us=options.tick_us,
             non_negative=options.non_negative,
             force=options.force,
+            sidecar=options.sidecar,
+            update_meta=options.update_meta,
         )
     )
-    return {
+    entry: dict[str, Any] = {
         "input": str(source),
         "modality": modality,
         "retimed": str(source),
@@ -190,12 +214,40 @@ def _process_one_inplace(source: Path, options: BatchOptions) -> dict[str, Any]:
         "max_offset_us": stage_one["max_offset_us"],
         "warnings": stage_one["warnings"],
     }
+    if stage_one.get("info"):
+        entry["info"] = stage_one["info"]
+    if not options.denoise:
+        return entry
+
+    denoised = default_process_output(source)
+    if denoised.exists() and not options.force:
+        raise ValueError(f"output exists; pass --force to overwrite: {denoised}")
+    stage_two = run_replay(
+        ReplayOptions(
+            source=source,
+            output=denoised,
+            modality=modality,
+            sidecar=options.sidecar,
+            update_meta=options.update_meta,
+            causal=options.causal,
+        )
+    )
+    entry["denoised"] = str(denoised)
+    entry["segments"] = stage_two["segments"]
+    entry["valid_samples"] = stage_two["valid_samples"]
+    entry["unemitted_samples"] = stage_two["unemitted_samples"]
+    if stage_two.get("info"):
+        entry["info"] = stage_two["info"]
+    if stage_two["segments"] != 1:
+        entry["warnings"] = [
+            *entry["warnings"],
+            f"stage two split the recording into {stage_two['segments']} segments",
+        ]
+    return entry
 
 
 def run_batch(options: BatchOptions) -> dict[str, Any]:
     """Process every matched recording, continuing past individual failures."""
-    if options.inplace and options.denoise:
-        raise ValueError("--inplace cannot be combined with --denoise; stage two still needs CSV")
     if not options.inplace and options.output_dir is None:
         raise ValueError("--output-dir is required unless --inplace is set")
 
@@ -232,13 +284,18 @@ def run_batch(options: BatchOptions) -> dict[str, Any]:
         "inplace": options.inplace,
         "recordings": processed,
         "failures": failed,
+        "sidecar": options.sidecar,
+        "update_meta": options.update_meta,
         "note": (
             "In-place mode renames each parquet to *.bak and writes the rebuild as "
-            "the original name."
+            "the original name; --denoise adds <stem>.denoised.parquet beside it. "
+            "Diagnostics merge into meta/info.json unless --no-update-meta; "
+            "per-file sidecars require --sidecar."
             if options.inplace
             else (
                 "Outputs mirror each input's path relative to root, because acquisition "
-                "layouts reuse file names across sessions."
+                "layouts reuse file names across sessions. "
+                "Diagnostics merge into meta/info.json when present unless --no-update-meta."
             )
         ),
     }

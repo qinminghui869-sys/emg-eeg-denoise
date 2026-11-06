@@ -10,6 +10,7 @@ from .filters import (
     infer_modality,
     modality_preset,
 )
+from .offline import offline_denoise
 
 __all__ = [
     "DenoisedBlock",
@@ -22,4 +23,5 @@ __all__ = [
     "ModalityPreset",
     "infer_modality",
     "modality_preset",
+    "offline_denoise",
 ]

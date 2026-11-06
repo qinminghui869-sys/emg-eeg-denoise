@@ -26,7 +26,7 @@ def test_csv_stream_preserves_epoch_time_partial_tail_gap_and_reports(tmp_path):
     x = np.sin(np.arange(len(t)))
     source, output = tmp_path / "input.csv", tmp_path / "out.csv"
     write_csv(source, t, x)
-    assert main(["process", str(source), "--output", str(output)]) == 0
+    assert main(["process", "--sidecar", "--json", str(source), "--output", str(output)]) == 0
     data = np.loadtxt(output, delimiter=",", skiprows=1)
     np.testing.assert_array_equal(data[:, 0], t)
     assert data.shape == (5003, 4)
@@ -42,7 +42,21 @@ def test_eeg_process_uses_eeg_chain(tmp_path):
     x = np.sin(2 * np.pi * 50 * t)
     source, output = tmp_path / "observation.eeg.csv", tmp_path / "out.csv"
     write_csv(source, t, x, header="timestamp,Fp1")
-    assert main(["process", str(source), "--output", str(output), "--modality", "auto"]) == 0
+    assert (
+        main(
+            [
+                "process",
+                "--sidecar",
+                "--json",
+                str(source),
+                "--output",
+                str(output),
+                "--modality",
+                "auto",
+            ]
+        )
+        == 0
+    )
     report = json.loads(Path(str(output) + ".report.json").read_text())
     assert report["modality"] == "eeg"
     assert report["sample_rate_hz"] == 250
@@ -56,6 +70,34 @@ def test_csv_does_not_overwrite_input(tmp_path):
     original = source.read_bytes()
     assert main(["process", str(source), "--output", str(source)]) == 2
     assert source.read_bytes() == original
+
+
+def test_process_parquet_defaults_to_sibling_denoised_output(tmp_path):
+    pytest.importorskip("pyarrow")
+    from tests.test_timebase import write_acquisition_parquet
+
+    source = tmp_path / "observation.left_wrist_emg.parquet"
+    # Uniform stamps so stage two accepts the recording without a prior retime.
+    write_acquisition_parquet(source, samples=4000, channels=2)
+    # Overwrite with a contiguous axis (acquisition helper writes quantized stamps).
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    table = pq.read_table(source)
+    stamps = pa.array(np.arange(4000, dtype=np.float64) / 2000.0)
+    columns = {name: table[name] for name in table.column_names if name != "timestamp"}
+    pq.write_table(pa.table({"timestamp": stamps, **columns}), source)
+
+    assert main(["process", "--sidecar", "--json", str(source)]) == 0
+    output = tmp_path / "observation.left_wrist_emg.denoised.parquet"
+    assert output.is_file()
+    report = json.loads(Path(f"{output}.report.json").read_text())
+    assert report["output"] == str(output)
+    assert report["input_samples"] == report["output_samples"] == 4000
+    rebuilt = pq.read_table(output)
+    assert "valid" in rebuilt.column_names
+    assert "segment_id" in rebuilt.column_names
+    assert "dim_0" in rebuilt.column_names
 
 
 def test_python_module_entrypoint_uses_the_same_cli(tmp_path, monkeypatch):

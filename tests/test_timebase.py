@@ -159,10 +159,18 @@ def test_retime_preserves_sample_values_exactly(tmp_path):
 def test_retime_writes_a_report_beside_the_output(tmp_path):
     source, output = tmp_path / "raw.csv", tmp_path / "retimed.csv"
     write_acquisition_csv(source, samples=600, channels=1)
-    run_retime(RetimeOptions(source=source, output=output))
+    run_retime(RetimeOptions(source=source, output=output, sidecar=True))
     report = json.loads((tmp_path / "retimed.csv.timebase.json").read_text())
     assert report["tick_us"] == pytest.approx(OBSERVED_TICK_S * 1e6, rel=1e-6)
     assert report["measured_period_us"] == pytest.approx(PERIOD_S * 1e6, abs=1.0)
+
+
+def test_retime_skips_sidecar_by_default(tmp_path):
+    source, output = tmp_path / "raw.csv", tmp_path / "retimed.csv"
+    write_acquisition_csv(source, samples=4000, channels=1)
+    payload = run_retime(RetimeOptions(source=source, output=output))
+    assert payload["report"] is None
+    assert not (tmp_path / "retimed.csv.timebase.json").exists()
 
 
 def test_retime_rejects_an_output_that_would_clobber_the_source(tmp_path):
@@ -248,11 +256,11 @@ def test_cli_retime_then_process_completes_both_stages(tmp_path, capsys):
     retimed, denoised = tmp_path / "retimed.csv", tmp_path / "denoised.csv"
     write_acquisition_csv(source, samples=4000, channels=1)
 
-    assert main(["retime", str(source), "--output", str(retimed)]) == 0
+    assert main(["retime", "--json", str(source), "--output", str(retimed)]) == 0
     stage_one = json.loads(capsys.readouterr().out)
     assert stage_one["rate_hz"] == float(FS)
 
-    assert main(["process", str(retimed), "--output", str(denoised)]) == 0
+    assert main(["process", "--json", str(retimed), "--output", str(denoised)]) == 0
     stage_two = json.loads(capsys.readouterr().out)
     # A rebuilt axis must not look discontinuous to the streaming engine.
     assert stage_two["segments"] == 1
@@ -263,7 +271,15 @@ def test_cli_retime_reports_failure_when_the_rate_contradicts_the_data(tmp_path,
     source = tmp_path / "raw.csv"
     write_acquisition_csv(source, samples=2000, channels=1)
     exit_code = main(
-        ["retime", str(source), "--output", str(tmp_path / "out.csv"), "--rate", "500"]
+        [
+            "retime",
+            "--json",
+            str(source),
+            "--output",
+            str(tmp_path / "out.csv"),
+            "--rate",
+            "500",
+        ]
     )
     assert exit_code == 1
     assert json.loads(capsys.readouterr().out)["warnings"]
