@@ -4,11 +4,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from emg_denoise.cli import main
-from emg_denoise.filters import FS
-from emg_denoise.io import load_recording
-from emg_denoise.retime import RetimeOptions, load_acquisition, run_retime
-from emg_denoise.timebase import (
+from emg_eeg_denoise.cli import main
+from emg_eeg_denoise.dsp.filters import FS
+from emg_eeg_denoise.io import load_recording
+from emg_eeg_denoise.pipeline.retime import RetimeOptions, load_acquisition, run_retime
+from emg_eeg_denoise.pipeline.timebase import (
     OBSERVED_TICK_S,
     estimate_tick,
     find_resync_points,

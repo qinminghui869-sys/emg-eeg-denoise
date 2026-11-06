@@ -3,12 +3,12 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "emg-denoise"
-version = "0.1.0"
-description = "Stateful 2 kHz sEMG denoising with a 50 Hz IIR comb and gated SWT enhancement"
+name = "emg-eeg-denoise"
+version = "0.2.0"
+description = "EMG/EEG timestamp rebuild and causal denoising (comb/notch)"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.26,<3", "scipy>=1.11,<2", "PyWavelets>=1.5,<2"]
+dependencies = ["numpy>=1.26,<3", "scipy>=1.11,<2"]
 
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -22,8 +22,8 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/qinminghui869-sys/emg-denoise"
-Issues = "https://github.com/qinminghui869-sys/emg-denoise/issues"
+Repository = "https://github.com/qinminghui869-sys/emg-eeg-denoise"
+Issues = "https://github.com/qinminghui869-sys/emg-eeg-denoise/issues"
 
 [project.optional-dependencies]
 parquet = ["pyarrow>=14,<25"]
@@ -39,13 +39,15 @@ dev = [
 ]
 
 [project.scripts]
-emg-denoise = "emg_denoise.cli:main"
+emg-eeg-denoise = "emg_eeg_denoise.cli:main"
+# Short alias
+eed = "emg_eeg_denoise.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-emg_denoise = ["py.typed"]
+emg_eeg_denoise = ["py.typed"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
@@ -63,16 +65,16 @@ ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src/emg_denoise"]
+files = ["src/emg_eeg_denoise"]
 strict = true
 
 [[tool.mypy.overrides]]
-module = ["scipy.*", "pywt.*", "pyarrow.*"]
+module = ["scipy.*", "pyarrow.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]
 branch = true
-source = ["emg_denoise"]
+source = ["emg_eeg_denoise"]
 
 [tool.coverage.report]
 show_missing = true

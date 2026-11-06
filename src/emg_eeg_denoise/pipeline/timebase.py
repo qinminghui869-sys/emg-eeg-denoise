@@ -8,8 +8,8 @@ therefore reports only four distinct gaps -- 451.088, 450.850 (one tick, two
 float32 neighbours) and 902.176, 901.937 (two ticks) -- while averaging exactly
 500 us.
 
-The raw stamps are consequently unusable downstream: :func:`emg_denoise.io.load_recording`
-requires contiguous 2 kHz stamps, and replay treats any off-period gap as a
+The raw stamps are consequently unusable downstream: :func:`emg_eeg_denoise.io.load_recording`
+requires contiguous uniform stamps, and replay treats any off-period gap as a
 segment break, which would shatter one recording into thousands of fragments and
 reset the streaming filter state at each one.
 
@@ -29,7 +29,7 @@ from typing import Final
 
 import numpy as np
 
-from ._typing import FloatArray, IntArray
+from .._typing import FloatArray, IntArray
 
 #: Clock resolution observed on the BCIGO wrist-EMG recorders, in seconds.
 OBSERVED_TICK_S: Final = 451.08795166015625e-6

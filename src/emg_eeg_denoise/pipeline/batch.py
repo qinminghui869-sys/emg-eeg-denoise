@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .filters import FS
-from .io import dump_json
+from ..dsp.filters import Modality, infer_modality, modality_preset
+from ..io import dump_json
 from .replay import ReplayOptions, run_replay
 from .retime import RetimeOptions, run_retime
 
@@ -39,8 +39,8 @@ class BatchOptions:
     non_negative: bool = True
     #: Also run stage two on each retimed recording.
     denoise: bool = False
-    wavelet: bool = False
-    calibration: Path | None = None
+    #: Fixed modality for every file; None infers per path (``eeg`` in name → EEG).
+    modality: Modality | None = None
     #: Overwrite outputs that already exist instead of refusing.
     force: bool = False
     #: Rebuild matched parquet files in place (``source`` → ``source.bak``).
@@ -100,9 +100,20 @@ def destination(source: Path, root: Path, output_dir: Path) -> Path:
     return output_dir / relative / source.stem
 
 
+def _modality_for(source: Path, options: BatchOptions) -> Modality:
+    return options.modality if options.modality is not None else infer_modality(source)
+
+
+def _rate_for(source: Path, options: BatchOptions) -> float:
+    if options.rate_hz is not None:
+        return float(options.rate_hz)
+    return float(modality_preset(_modality_for(source, options)).sample_rate)
+
+
 def _process_one_mirrored(source: Path, target: Path, options: BatchOptions) -> dict[str, Any]:
     """Run stage one, and stage two when requested, into a mirrored output directory."""
     assert options.output_dir is not None
+    modality = _modality_for(source, options)
     retimed = target / "retimed.csv"
     if retimed.exists() and not options.force:
         raise ValueError(f"output exists; pass --force to overwrite: {retimed}")
@@ -112,7 +123,7 @@ def _process_one_mirrored(source: Path, target: Path, options: BatchOptions) -> 
         RetimeOptions(
             source=source,
             output=retimed,
-            rate_hz=float(FS) if options.rate_hz is None else options.rate_hz,
+            rate_hz=_rate_for(source, options),
             tick_us=options.tick_us,
             non_negative=options.non_negative,
             force=options.force,
@@ -120,6 +131,7 @@ def _process_one_mirrored(source: Path, target: Path, options: BatchOptions) -> 
     )
     entry: dict[str, Any] = {
         "input": str(source),
+        "modality": modality,
         "retimed": str(retimed),
         "samples": stage_one["samples"],
         "channels": stage_one["channels"],
@@ -135,12 +147,7 @@ def _process_one_mirrored(source: Path, target: Path, options: BatchOptions) -> 
     if denoised.exists() and not options.force:
         raise ValueError(f"output exists; pass --force to overwrite: {denoised}")
     stage_two = run_replay(
-        ReplayOptions(
-            source=retimed,
-            output=denoised,
-            wavelet=options.wavelet,
-            calibration=options.calibration,
-        )
+        ReplayOptions(source=retimed, output=denoised, modality=modality)
     )
     entry["denoised"] = str(denoised)
     entry["segments"] = stage_two["segments"]
@@ -160,11 +167,12 @@ def _process_one_inplace(source: Path, options: BatchOptions) -> dict[str, Any]:
     """Rebuild one parquet recording under its own path, keeping a ``.bak`` copy."""
     if options.denoise:
         raise ValueError("--inplace cannot be combined with --denoise; stage two still needs CSV")
+    modality = _modality_for(source, options)
     stage_one = run_retime(
         RetimeOptions(
             source=source,
             inplace=True,
-            rate_hz=float(FS) if options.rate_hz is None else options.rate_hz,
+            rate_hz=_rate_for(source, options),
             tick_us=options.tick_us,
             non_negative=options.non_negative,
             force=options.force,
@@ -172,6 +180,7 @@ def _process_one_inplace(source: Path, options: BatchOptions) -> dict[str, Any]:
     )
     return {
         "input": str(source),
+        "modality": modality,
         "retimed": str(source),
         "backup": stage_one["backup"],
         "samples": stage_one["samples"],
@@ -219,6 +228,7 @@ def run_batch(options: BatchOptions) -> dict[str, Any]:
         "flagged": len(flagged),
         "total_samples": sum(int(entry["samples"]) for entry in processed),
         "denoised": options.denoise,
+        "modality": options.modality or "auto",
         "inplace": options.inplace,
         "recordings": processed,
         "failures": failed,

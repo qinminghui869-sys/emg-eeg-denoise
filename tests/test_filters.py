@@ -2,7 +2,16 @@ import numpy as np
 import pytest
 from scipy import signal
 
-from emg_denoise.filters import CausalFilterBank, IIRComb, bandpass_sos, comb_coefficients
+from emg_eeg_denoise.dsp.filters import (
+    CausalFilterBank,
+    IIRComb,
+    IIRNotch,
+    bandpass_sos,
+    comb_coefficients,
+    eeg_bandpass_sos,
+    eeg_notch_ba,
+    infer_modality,
+)
 
 
 def test_comb_matches_independent_scipy_design_for_irregular_chunks():
@@ -24,7 +33,7 @@ def test_comb_matches_independent_scipy_design_for_irregular_chunks():
     np.testing.assert_allclose(actual_a, a, atol=1e-15)
 
 
-def test_causal_main_chain_matches_scipy_and_channels_are_independent():
+def test_causal_emg_chain_matches_scipy_and_channels_are_independent():
     x = np.random.default_rng(4).normal(size=(8000, 4))
     b, a = signal.iircomb(50, 25, fs=2000)
     reference = signal.lfilter(b, a, signal.sosfilt(bandpass_sos(), x, axis=0), axis=0)
@@ -35,6 +44,24 @@ def test_causal_main_chain_matches_scipy_and_channels_are_independent():
         np.testing.assert_allclose(
             CausalFilterBank(1).process(x[:, c])[:, 0], got[:, c], atol=1e-12
         )
+
+
+def test_causal_eeg_chain_matches_scipy_reference():
+    x = np.random.default_rng(11).normal(size=(2000, 3))
+    sos = eeg_bandpass_sos(250)
+    b, a = eeg_notch_ba(250)
+    reference = signal.lfilter(b, a, signal.sosfilt(sos, x, axis=0), axis=0)
+    bank = CausalFilterBank(3, modality="eeg")
+    got = np.concatenate([bank.process(x[i : i + 10]) for i in range(0, len(x), 10)])
+    np.testing.assert_allclose(got, reference, atol=1e-12)
+
+
+def test_eeg_notch_attenuates_50hz_after_warmup():
+    t = np.arange(1500) / 250
+    x = np.sin(2 * np.pi * 50 * t)
+    y = IIRNotch(1).process(x)[:, 0]
+    gain = np.linalg.norm(y[250:]) / np.linalg.norm(x[250:])
+    assert gain < 10 ** (-30 / 20)
 
 
 def test_zero_weak_signal_linearity_and_reset():
@@ -64,3 +91,8 @@ def test_comb_keeps_off_notch_band_and_reports_drift_limitation():
     assert np.min(np.abs(h[outside])) >= 10 ** (-0.5 / 20)
     _, drift = signal.freqz(b, a, worN=[49.8, 50.2], fs=2000)
     np.testing.assert_allclose(20 * np.log10(np.abs(drift)), -14.1603, atol=0.001)
+
+
+def test_infer_modality_from_filename():
+    assert infer_modality("observation.eeg.parquet") == "eeg"
+    assert infer_modality("observation.left_wrist_emg.parquet") == "emg"

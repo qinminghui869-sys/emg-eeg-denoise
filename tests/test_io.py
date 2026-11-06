@@ -4,12 +4,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from emg_denoise.cli import main
-from emg_denoise.io import (
+from emg_eeg_denoise.cli import main
+from emg_eeg_denoise.io import (
     atomic_text_writer,
     dump_json,
     jsonable,
-    load_calibration,
     load_json_object,
     load_recording,
     validate_output_paths,
@@ -47,7 +46,7 @@ def test_atomic_replay_failure_preserves_destination_and_removes_temporary_files
     assert not Path(f"{output}.report.json").exists()
 
 
-def test_path_guards_cover_feature_report_symlink_and_hardlink_aliases(tmp_path):
+def test_path_guards_cover_symlink_and_hardlink_aliases(tmp_path):
     source = tmp_path / "input.csv"
     source.write_text("timestamp,emg\n0,1\n")
     symlink, hardlink = tmp_path / "symlink.csv", tmp_path / "hardlink.csv"
@@ -57,12 +56,12 @@ def test_path_guards_cover_feature_report_symlink_and_hardlink_aliases(tmp_path)
         with pytest.raises(ValueError, match="distinct"):
             validate_output_paths([source], [alias])
     output = tmp_path / "out.csv"
-    for features in [source, output, Path(f"{output}.report.json")]:
-        assert (
-            main(["process", str(source), "--output", str(output), "--features", str(features)])
-            == 2
-        )
-    assert source.read_text() == "timestamp,emg\n0,1\n"
+    report = Path(f"{output}.report.json")
+    with pytest.raises(ValueError, match="distinct"):
+        validate_output_paths([source], [output, source])
+    with pytest.raises(ValueError, match="distinct"):
+        validate_output_paths([source], [output, report, report])
+
 
 
 def test_strict_json_serialization_and_atomic_rollback(tmp_path):
@@ -82,11 +81,8 @@ def test_strict_json_serialization_and_atomic_rollback(tmp_path):
         jsonable(object())
 
 
-def test_json_input_shape_and_sampling_rate_are_validated(tmp_path):
-    source = tmp_path / "calibration.json"
+def test_json_input_shape_is_validated(tmp_path):
+    source = tmp_path / "report.json"
     source.write_text("[]")
     with pytest.raises(ValueError, match="object"):
         load_json_object(source)
-    source.write_text(json.dumps({"sample_rate_hz": 1000, "sigmas": [[0]] * 4}))
-    with pytest.raises(ValueError, match="2000"):
-        load_calibration(source)

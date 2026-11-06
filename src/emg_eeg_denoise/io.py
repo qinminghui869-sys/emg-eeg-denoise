@@ -15,15 +15,14 @@ from typing import IO, Any
 import numpy as np
 
 from ._typing import FloatArray
-from .filters import FS, sample_matrix
-from .wavelet import WaveletCalibration
+from .dsp.filters import FS, sample_matrix
 
-REPORT_COLUMNS = frozenset({"valid", "wavelet_active", "segment_id"})
+REPORT_COLUMNS = frozenset({"valid", "segment_id"})
 
 
 @dataclass(frozen=True, slots=True)
 class Recording:
-    """An in-memory, contiguous recording used for offline calibration/qualification."""
+    """An in-memory, contiguous recording used for offline helpers."""
 
     timestamps: FloatArray
     samples: FloatArray
@@ -56,7 +55,7 @@ def parse_row(row: list[str], columns: int, line_number: int) -> list[float]:
     return values
 
 
-def load_recording(path: str | Path) -> Recording:
+def load_recording(path: str | Path, sample_rate: float = FS) -> Recording:
     with Path(path).open(newline="", encoding="utf-8-sig") as source:
         reader = csv.reader(source)
         header = read_header(reader)
@@ -65,8 +64,9 @@ def load_recording(path: str | Path) -> Recording:
         raise ValueError("CSV contains no samples")
     data = np.asarray(rows, dtype=np.float64)
     timestamps = data[:, 0]
-    if not np.all(np.abs(np.diff(timestamps) - 1 / FS) <= 1e-6):
-        raise ValueError("recording must have contiguous 2000 Hz timestamps")
+    period = 1 / float(sample_rate)
+    if not np.all(np.abs(np.diff(timestamps) - period) <= 1e-6):
+        raise ValueError(f"recording must have contiguous {sample_rate:g} Hz timestamps")
     return Recording(timestamps, sample_matrix(data[:, 1:]), tuple(header[1:]))
 
 
@@ -139,10 +139,3 @@ def load_json_object(path: str | Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("JSON document must contain an object")
     return value
-
-
-def load_calibration(path: str | Path) -> WaveletCalibration:
-    data = load_json_object(path)
-    if data.get("sample_rate_hz", FS) != FS:
-        raise ValueError("calibration must use 2000 Hz sampling")
-    return WaveletCalibration(data["sigmas"])

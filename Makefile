@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: install format lint typecheck test build check validate
+.PHONY: install format lint typecheck test build check
 
 install:
 	$(PYTHON) -m pip install -e '.[dev]'
@@ -24,6 +24,3 @@ build:
 	$(PYTHON) -m twine check --strict dist/*
 
 check: lint typecheck test build
-
-validate:
-	$(PYTHON) -m emg_denoise validate --output artifacts --channels 1 8

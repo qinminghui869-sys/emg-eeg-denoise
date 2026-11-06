@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export L3 wrist EMG parquet into compact JSON for emg_viewer.html."""
+"""Export L3 wrist EMG parquet into compact JSON for viewer.html."""
 
 from __future__ import annotations
 

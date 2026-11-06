@@ -3,8 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from emg_denoise.batch import BatchOptions, destination, mirror_root, resolve_inputs, run_batch
-from emg_denoise.cli import main
+from emg_eeg_denoise.cli import main
+from emg_eeg_denoise.pipeline.batch import (
+    BatchOptions,
+    destination,
+    mirror_root,
+    resolve_inputs,
+    run_batch,
+)
 from tests.test_timebase import write_acquisition_parquet
 
 
@@ -82,7 +88,7 @@ def test_existing_denoised_output_is_refused_without_force(tmp_path):
 
 def test_a_split_recording_is_flagged(tmp_path, monkeypatch):
     """Stage two reporting more than one segment means the axis was not uniform."""
-    import emg_denoise.batch as batch_module
+    import emg_eeg_denoise.pipeline.batch as batch_module
 
     build_session_tree(tmp_path / "raw", sessions=("L3-002",), sides=("left",), samples=4000)
 

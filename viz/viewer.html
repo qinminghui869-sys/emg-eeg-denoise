@@ -294,7 +294,7 @@
   <header>
     <div>
       <h1>EMG & EEG <span>Viewer</span></h1>
-      <div class="meta" id="sourceMeta">EMG-EEG-DENOISE · 加载示例数据中…</div>
+      <div class="meta" id="sourceMeta">emg-eeg-denoise · 加载示例数据中…</div>
     </div>
     <div class="controls">
       <label class="ctrl">视图
@@ -471,8 +471,8 @@
 
   const EEG_FILTER = {
     ...DEFAULT_FILTER,
-    hpHz: 1,
-    lpHz: 40,
+    hpHz: 0.5,
+    lpHz: 50,
     enableNotch: true,
     notches: [{ f0: 50, bw: 2 }],
   };

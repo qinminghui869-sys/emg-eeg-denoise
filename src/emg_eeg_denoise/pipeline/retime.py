@@ -3,7 +3,7 @@
 Reads an acquisition parquet (or CSV), replaces the tick-quantized timestamps
 with a uniform axis, and writes either:
 
-- a ``timestamp,channel...`` CSV for stage two (``emg-denoise process``), or
+- a ``timestamp,channel...`` CSV for stage two (``emg-eeg-denoise process``), or
 - a parquet that keeps the acquisition schema (``--inplace`` or ``.parquet`` output).
 
 In-place mode renames the source to ``<source>.bak`` and writes the rebuilt file
@@ -20,9 +20,9 @@ from typing import Any
 
 import numpy as np
 
-from ._typing import FloatArray
-from .filters import FS, sample_matrix
-from .io import atomic_text_writer, dump_json, validate_output_paths
+from .._typing import FloatArray
+from ..dsp.filters import FS, sample_matrix
+from ..io import atomic_text_writer, dump_json, validate_output_paths
 from .timebase import TimebaseReport, rebuild_timestamps
 
 #: Acquisition files name the time column this way; channels are ``dim_0``, ``dim_1``, ...
@@ -136,7 +136,7 @@ def _is_parquet_path(path: Path) -> bool:
 def load_acquisition(path: str | Path) -> Acquisition:
     """Load a parquet or CSV recording without validating its sample spacing.
 
-    Unlike :func:`emg_denoise.io.load_recording`, this accepts the non-uniform
+    Unlike :func:`emg_eeg_denoise.io.load_recording`, this accepts the non-uniform
     timestamps that stage one exists to repair.
     """
     source = Path(path)
@@ -152,7 +152,7 @@ def _read_parquet(source: Path) -> Acquisition:
         import pyarrow.parquet as pq
     except ImportError as error:  # pragma: no cover - depends on the environment
         raise ValueError(
-            "reading parquet requires pyarrow; install emg-denoise[parquet]"
+            "reading parquet requires pyarrow; install emg-eeg-denoise[parquet]"
         ) from error
     # pyarrow ships partial annotations; read_table is untyped upstream.
     table: Any = pq.read_table(source)  # type: ignore[no-untyped-call]
@@ -231,7 +231,7 @@ def _write_parquet(path: Path, timestamps: FloatArray, acquisition: Acquisition)
         import pyarrow.parquet as pq
     except ImportError as error:  # pragma: no cover - depends on the environment
         raise ValueError(
-            "writing parquet requires pyarrow; install emg-denoise[parquet]"
+            "writing parquet requires pyarrow; install emg-eeg-denoise[parquet]"
         ) from error
 
     arrays: dict[str, Any] = {}
@@ -259,7 +259,8 @@ def _write_parquet(path: Path, timestamps: FloatArray, acquisition: Acquisition)
             delete=False,
         ) as handle:
             temporary = Path(handle.name)
-        pq.write_table(table, temporary)
+        write_table: Any = pq.write_table
+        write_table(table, temporary)
         os.replace(temporary, path)
         temporary = None
     finally:

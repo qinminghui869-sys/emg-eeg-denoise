@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 项目更名为 `emg-eeg-denoise`（包 `emg_eeg_denoise`，CLI `emg-eeg-denoise` / `eed`）；源码按 `dsp/` 与 `pipeline/` 分组；浏览页改为 `viz/viewer.html`。
+- 重构为四项能力：EMG 时基重建、EMG 去噪（20/450/梳状 50 Hz）、EEG 去噪（0.5/50/陷波 50 Hz）、以及 EMG & EEG Viewer。
+- 新增因果 EEG 链路与 `--modality emg|eeg|auto`；`process` / `batch` 同时支持流式与离线批处理。
+- 删除流式特征、`validate` 合成验收与 `metrics` 辅助模块。
+- Viewer 的 EEG 默认改为高通 0.5 Hz、低通 50 Hz、陷波 50 Hz。
+- 移除可选小波增强（SWT）：删除 `wavelet` / `qualification` 模块、`calibrate` / `qualify` 子命令及 PyWavelets 依赖；主链仅保留因果带通 + 50 Hz 梳状陷波。
 - 新增阶段一 `retime` 子命令：重建采集数据的 tick 量化时间戳为均匀时基，输出 `process` 可直接读取的 CSV 与 `.timebase.json` 报告。样本值逐位不变。
 - 新增 `timebase` 模块：估计时钟分辨率、定位 2-tick 硬件校正点、按样本序号重建时间轴，并给出偏移诊断与不可信时的告警。
 - `retime` 支持 parquet（可选依赖 `[parquet]`）与 CSV，自动按 `dim_N` 数字顺序识别通道、跳过 `episode_index` 等元数据列。
@@ -13,7 +19,7 @@
 
 ## 0.1.0
 
-- 实现2 kHz多通道因果肌电去噪、50 Hz IIR梳状陷波和受验收约束的可选SWT。
+- 实现2 kHz多通道因果肌电去噪与50 Hz IIR梳状陷波。
 - 提供原时间戳、预热/断流状态、流式特征和CSV回放工具。
 - 将命令行、数据I/O、回放服务、质量指标与DSP核心分层。
 - 增加严格类型检查、统一格式、分支覆盖率门槛、跨Python版本CI及打包检查。
