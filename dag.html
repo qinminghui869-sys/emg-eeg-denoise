@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>emg-eeg-denoise 处理链路</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1c2128;
+      --muted: #4d5966;
+      --line: #5c6770;
+      --bg: #f4f6f8;
+      --card: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 400 16px/1.4 "Segoe UI", "Noto Sans SC", "PingFang SC", sans-serif;
+    }
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 20px 40px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      font-weight: 500;
+    }
+    p.lead {
+      margin: 0 0 16px;
+      color: var(--muted);
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px 18px;
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border: 1.5px solid var(--line);
+      border-radius: 2px;
+    }
+    .swatch.in { background: #eef1f4; border-color: #3d4450; }
+    .swatch.s1 { background: #e7f1fb; border-color: #1d4e89; }
+    .swatch.s2 { background: #e5f6f1; border-color: #0e6b52; }
+    .swatch.side { background: #fbf4e6; border-color: #8a5a12; }
+    .swatch.out { background: #eef2f0; border-color: #3e4c45; }
+    .frame {
+      background: var(--card);
+      border: 1px solid #d5dbe2;
+      border-radius: 8px;
+      overflow: auto;
+    }
+    svg { display: block; min-width: 1080px; }
+    .box { stroke-width: 1.5; }
+    .in { fill: #eef1f4; stroke: #3d4450; }
+    .s1 { fill: #e7f1fb; stroke: #1d4e89; }
+    .s2 { fill: #e5f6f1; stroke: #0e6b52; }
+    .side { fill: #fbf4e6; stroke: #8a5a12; }
+    .out { fill: #eef2f0; stroke: #3e4c45; }
+    text { fill: var(--ink); }
+    .title { font-size: 15px; font-weight: 500; }
+    .sub { font-size: 12px; fill: var(--muted); }
+    .edge { fill: none; stroke: var(--line); stroke-width: 1.5; }
+    .edge.dash { stroke-dasharray: 5 4; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>处理链路</h1>
+    <p class="lead">采集文件进入时间戳重建，再进入去噪。QC 与 Viewer 只读，不写回信号。</p>
+    <div class="legend">
+      <span><i class="swatch in"></i>输入</span>
+      <span><i class="swatch s1"></i>阶段一</span>
+      <span><i class="swatch s2"></i>阶段二</span>
+      <span><i class="swatch side"></i>只读</span>
+      <span><i class="swatch out"></i>产物</span>
+    </div>
+    <div class="frame">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 760" role="img" aria-label="采集文件经 retime 重建时间戳，再经 process 离线或因果去噪，诊断写入 meta。qc 与 viewer 只读。">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 1.2 L 9 5 L 0 8.8 Z" fill="#5c6770"></path>
+          </marker>
+        </defs>
+
+        <!-- 采集 → 四个入口 -->
+        <path class="edge" marker-end="url(#arrow)" d="M548 72 V94 H131 V120"></path>
+        <path class="edge" marker-end="url(#arrow)" d="M548 94 H409 V120"></path>
+        <path class="edge" marker-end="url(#arrow)" d="M548 94 H687 V120"></path>
+        <path class="edge" marker-end="url(#arrow)" d="M548 94 H965 V120"></path>
+
+        <!-- batch 调用两阶段 -->
+        <path class="edge" marker-end="url(#arrow)" d="M294 152 H246"></path>
+        <path class="edge" marker-end="url(#arrow)" d="M524 152 H572"></path>
+
+        <!-- 阶段一 -->
+        <path class="edge" marker-end="url(#arrow)" d="M131 184 V260"></path>
+        <path class="edge" marker-end="url(#arrow)" d="M131 184 V222 H409 V260"></path>
+        <path class="edge" marker-end="url(#arrow)" d="M131 336 V376 H230 V420"></path>
+        <path class="edge" marker-end="url(#arrow)" d="M409 336 V376 H230 V420"></path>
+
+        <!-- 阶段二 -->
+        <path class="edge" marker-end="url(#arrow)" d="M687 184 V260"></path>
+        <path class="edge" marker-end="url(#arrow)" d="M687 184 V222 H965 V260"></path>
+        <path class="edge" marker-end="url(#arrow)" d="M687 336 V376 H640 V420"></path>
+        <path class="edge" marker-end="url(#arrow)" d="M965 336 V376 H640 V420"></path>
+
+        <!-- 重建时基交给 process -->
+        <path class="edge" marker-end="url(#arrow)" d="M380 420 V400 H548 V152 H572"></path>
+        <text class="sub" x="464" y="392" text-anchor="middle">时基</text>
+        <text class="sub" x="812" y="530" text-anchor="end">同款</text>
+
+        <!-- 产物 -->
+        <path class="edge" marker-end="url(#arrow)" d="M230 484 V532 H460 V580"></path>
+        <path class="edge" marker-end="url(#arrow)" d="M640 484 V532 H460 V580"></path>
+
+        <!-- Viewer 与离线滤波同款，不写回 -->
+        <path class="edge dash" marker-end="url(#arrow)" d="M802 296 H826 V608 H850"></path>
+
+        <g>
+          <rect class="box in" x="438" y="16" width="220" height="56" rx="6"></rect>
+          <text class="title" x="548" y="38" text-anchor="middle">采集文件</text>
+          <text class="sub" x="548" y="56" text-anchor="middle">parquet / CSV</text>
+        </g>
+        <g>
+          <rect class="box s1" x="16" y="120" width="230" height="64" rx="6"></rect>
+          <text class="title" x="131" y="144" text-anchor="middle">retime</text>
+          <text class="sub" x="131" y="164" text-anchor="middle">阶段一 · 只改时间戳</text>
+        </g>
+        <g>
+          <rect class="box s1" x="294" y="120" width="230" height="64" rx="6"></rect>
+          <text class="title" x="409" y="144" text-anchor="middle">batch</text>
+          <text class="sub" x="409" y="164" text-anchor="middle">先重建，再可选去噪</text>
+        </g>
+        <g>
+          <rect class="box s2" x="572" y="120" width="230" height="64" rx="6"></rect>
+          <text class="title" x="687" y="144" text-anchor="middle">process</text>
+          <text class="sub" x="687" y="164" text-anchor="middle">阶段二</text>
+        </g>
+        <g>
+          <rect class="box side" x="850" y="120" width="230" height="64" rx="6"></rect>
+          <text class="title" x="965" y="144" text-anchor="middle">qc</text>
+          <text class="sub" x="965" y="164" text-anchor="middle">只读 · 不改数据</text>
+        </g>
+        <g>
+          <rect class="box s1" x="16" y="260" width="230" height="76" rx="6"></rect>
+          <text class="title" x="131" y="286" text-anchor="middle">anchor_interpolation</text>
+          <text class="sub" x="131" y="306" text-anchor="middle">EMG 默认 · 两端均分</text>
+          <text class="sub" x="131" y="322" text-anchor="middle">首尾与异常保持原样</text>
+        </g>
+        <g>
+          <rect class="box s1" x="294" y="260" width="230" height="76" rx="6"></rect>
+          <text class="title" x="409" y="290" text-anchor="middle">uniform</text>
+          <text class="sub" x="409" y="310" text-anchor="middle">EEG 默认 · 固定周期</text>
+        </g>
+        <g>
+          <rect class="box s2" x="572" y="260" width="230" height="76" rx="6"></rect>
+          <text class="title" x="687" y="286" text-anchor="middle">offline filtfilt</text>
+          <text class="sub" x="687" y="306" text-anchor="middle">非均匀段网格后映回</text>
+          <text class="sub" x="687" y="322" text-anchor="middle">20/450/梳状 · 0.5/50/陷波</text>
+        </g>
+        <g>
+          <rect class="box s2" x="850" y="260" width="230" height="76" rx="6"></rect>
+          <text class="title" x="965" y="290" text-anchor="middle">RealtimeDenoiser</text>
+          <text class="sub" x="965" y="310" text-anchor="middle">--causal · 须均匀时基</text>
+        </g>
+        <g>
+          <rect class="box out" x="80" y="420" width="300" height="64" rx="6"></rect>
+          <text class="title" x="230" y="444" text-anchor="middle">重建时基</text>
+          <text class="sub" x="230" y="464" text-anchor="middle">信号值不变 · 可留 .bak</text>
+        </g>
+        <g>
+          <rect class="box out" x="500" y="420" width="280" height="64" rx="6"></rect>
+          <text class="title" x="640" y="444" text-anchor="middle">*.denoised.*</text>
+          <text class="sub" x="640" y="464" text-anchor="middle">时间戳与样本数不变</text>
+        </g>
+        <g>
+          <rect class="box out" x="250" y="580" width="340" height="56" rx="6"></rect>
+          <text class="title" x="420" y="602" text-anchor="middle">meta/info.json</text>
+          <text class="sub" x="420" y="620" text-anchor="middle">timebase · denoised · episodes_stats</text>
+        </g>
+        <g>
+          <rect class="box side" x="850" y="580" width="230" height="56" rx="6"></rect>
+          <text class="title" x="965" y="602" text-anchor="middle">viewer.html</text>
+          <text class="sub" x="965" y="620" text-anchor="middle">同款 filtfilt · 不写回</text>
+        </g>
+      </svg>
+    </div>
+  </main>
+</body>
+</html>

@@ -11,7 +11,7 @@ EMG / EEG 时基重建与因果去噪工具，以及浏览器对照页。
 
 > 本仓库不含采集驱动。文件 `process` 与浏览页同为离线 filtfilt；`RealtimeDenoiser` 为因果流式。本机回放不能证明端到端延迟。
 
-[架构说明](docs/architecture.md) · [开发规范](CONTRIBUTING.md) · [变更记录](CHANGELOG.md)
+[架构说明](docs/architecture.md) · [处理链路 DAG](dag.html) · [开发规范](CONTRIBUTING.md) · [变更记录](CHANGELOG.md)
 
 ---
 
