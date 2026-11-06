@@ -41,7 +41,9 @@ def test_resync_points_match_the_two_tick_jumps():
 
 def test_stitched_rebuild_is_exactly_uniform():
     samples = 4000
-    rebuilt, report = rebuild_timestamps(quantized_stamps(samples), period_s=PERIOD_S)
+    rebuilt, report = rebuild_timestamps(
+        method="uniform", timestamps=quantized_stamps(samples), period_s=PERIOD_S
+    )
     assert np.abs(np.diff(rebuilt) - PERIOD_S).max() < 1e-12
     # Quantization leaves up to a tick at each endpoint, so the measured period
     # is only recoverable to within tick/(n-1).
@@ -50,7 +52,9 @@ def test_stitched_rebuild_is_exactly_uniform():
 
 
 def test_segment_length_matches_the_resync_prediction():
-    _, report = rebuild_timestamps(quantized_stamps(20000), period_s=PERIOD_S)
+    _, report = rebuild_timestamps(
+        method="uniform", timestamps=quantized_stamps(20000), period_s=PERIOD_S
+    )
     mean_length = report.samples / report.segments
     assert mean_length == pytest.approx(report.expected_segment_samples, rel=0.02)
 
@@ -59,7 +63,7 @@ def test_unstitched_rebuild_stays_within_half_a_tick():
     """Centroid anchoring bounds the offset; shifting to zero would undo that."""
     stamps = quantized_stamps(4000, start=1.0)
     rebuilt, report = rebuild_timestamps(
-        stamps, period_s=PERIOD_S, stitch=False, non_negative=False
+        method="uniform", timestamps=stamps, period_s=PERIOD_S, stitch=False, non_negative=False
     )
     assert report.max_offset_s <= OBSERVED_TICK_S / 2
     assert np.abs(rebuilt - stamps).max() <= OBSERVED_TICK_S / 2
@@ -67,21 +71,31 @@ def test_unstitched_rebuild_stays_within_half_a_tick():
 
 def test_stitching_trades_seams_for_accumulated_offset():
     stamps = quantized_stamps(4000, start=1.0)
-    _, stitched = rebuild_timestamps(stamps, period_s=PERIOD_S, non_negative=False)
-    _, anchored = rebuild_timestamps(stamps, period_s=PERIOD_S, stitch=False, non_negative=False)
+    _, stitched = rebuild_timestamps(
+        method="uniform", timestamps=stamps, period_s=PERIOD_S, non_negative=False
+    )
+    _, anchored = rebuild_timestamps(
+        method="uniform", timestamps=stamps, period_s=PERIOD_S, stitch=False, non_negative=False
+    )
     assert anchored.max_offset_s < stitched.max_offset_s
 
 
 def test_non_negative_shifts_the_axis_to_zero():
     stamps = quantized_stamps(400)
-    rebuilt, _ = rebuild_timestamps(stamps, period_s=PERIOD_S, non_negative=True)
+    rebuilt, _ = rebuild_timestamps(
+        method="uniform", timestamps=stamps, period_s=PERIOD_S, non_negative=True
+    )
     assert rebuilt[0] >= 0.0
 
 
 def test_allowing_negative_preserves_the_centroid_anchor():
     stamps = quantized_stamps(400)
-    anchored, _ = rebuild_timestamps(stamps, period_s=PERIOD_S, non_negative=False)
-    shifted, _ = rebuild_timestamps(stamps, period_s=PERIOD_S, non_negative=True)
+    anchored, _ = rebuild_timestamps(
+        method="uniform", timestamps=stamps, period_s=PERIOD_S, non_negative=False
+    )
+    shifted, _ = rebuild_timestamps(
+        method="uniform", timestamps=stamps, period_s=PERIOD_S, non_negative=True
+    )
     assert np.abs(np.diff(anchored) - PERIOD_S).max() < 1e-12
     assert shifted[0] == pytest.approx(0.0)
 
@@ -142,7 +156,7 @@ def test_retime_output_is_accepted_by_stage_two(tmp_path):
     write_acquisition_csv(source, samples=4000, channels=2)
     payload = run_retime(RetimeOptions(source=source, output=output))
 
-    recording = load_recording(output)
+    recording = load_acquisition(output)
     assert recording.channel_names == ("dim_0", "dim_1")
     assert recording.samples.shape == (payload["samples"], 2)
     assert payload["warnings"] == []
@@ -153,7 +167,7 @@ def test_retime_preserves_sample_values_exactly(tmp_path):
     source, output = tmp_path / "raw.csv", tmp_path / "retimed.csv"
     write_acquisition_csv(source, samples=600, channels=3)
     run_retime(RetimeOptions(source=source, output=output))
-    assert np.array_equal(load_acquisition(source).samples, load_recording(output).samples)
+    assert np.array_equal(load_acquisition(source).samples, load_acquisition(output).samples)
 
 
 def test_retime_writes_a_report_beside_the_output(tmp_path):
@@ -194,7 +208,8 @@ def test_inplace_retime_backs_up_and_rewrites_parquet(tmp_path):
     assert payload["warnings"] == []
 
     rebuilt = load_acquisition(source)
-    assert np.abs(np.diff(rebuilt.timestamps) - PERIOD_S).max() < 1e-12
+    assert np.all(np.diff(rebuilt.timestamps) > 0)
+    assert rebuilt.timestamps[0] == load_acquisition(source).timestamps[0]
     assert np.array_equal(rebuilt.samples, load_acquisition(backup).samples)
     assert "episode_index" not in rebuilt.channel_names
     assert list(rebuilt.extras) == ["episode_index"]
@@ -225,7 +240,8 @@ def test_parquet_output_path_writes_parquet(tmp_path):
     write_acquisition_parquet(source, samples=600, channels=2)
     run_retime(RetimeOptions(source=source, output=output))
     rebuilt = load_acquisition(output)
-    assert np.abs(np.diff(rebuilt.timestamps) - PERIOD_S).max() < 1e-12
+    assert np.all(np.diff(rebuilt.timestamps) > 0)
+    assert rebuilt.timestamps[0] == load_acquisition(source).timestamps[0]
     assert source.is_file()
     assert not Path(f"{source}.bak").exists()
 
@@ -321,6 +337,32 @@ def test_parquet_metadata_columns_are_not_treated_as_channels(tmp_path):
     assert "episode_index" not in load_acquisition(source).channel_names
 
 
+def test_legacy_valid_segment_columns_are_not_signal_channels(tmp_path):
+    """Old denoised files may carry QC columns; upstream must not see them as EMG."""
+    pq = pytest.importorskip("pyarrow.parquet")
+    pa = pytest.importorskip("pyarrow")
+    source = tmp_path / "legacy.denoised.parquet"
+    n = 100
+    pq.write_table(
+        pa.table(
+            {
+                "timestamp": pa.array(np.arange(n, dtype=np.float64) / 2000.0),
+                "episode_index": pa.array(np.zeros(n, dtype=np.int64)),
+                "dim_0": pa.array(np.ones(n, dtype=np.float32)),
+                "dim_1": pa.array(np.ones(n, dtype=np.float32) * 2),
+                "valid": pa.array(np.ones(n, dtype=bool)),
+                "segment_id": pa.array(np.zeros(n, dtype=np.int64)),
+            }
+        ),
+        source,
+    )
+    acquisition = load_acquisition(source)
+    assert acquisition.channel_names == ("dim_0", "dim_1")
+    assert acquisition.samples.shape == (n, 2)
+    assert "valid" in acquisition.extras
+    assert "segment_id" in acquisition.extras
+
+
 def test_parquet_retime_feeds_stage_two(tmp_path):
     source, output = tmp_path / "raw.parquet", tmp_path / "retimed.csv"
     write_acquisition_parquet(source, samples=4000, channels=8)
@@ -328,7 +370,7 @@ def test_parquet_retime_feeds_stage_two(tmp_path):
 
     assert payload["channels"] == 8
     assert payload["warnings"] == []
-    recording = load_recording(output)
+    recording = load_acquisition(output)
     assert recording.samples.shape == (payload["samples"], 8)
     assert np.array_equal(load_acquisition(source).samples, recording.samples)
 
@@ -364,8 +406,102 @@ def test_retime_accepts_an_explicit_tick(tmp_path):
 def test_retime_without_stitching_leaves_segment_seams(tmp_path):
     source = tmp_path / "raw.parquet"
     write_acquisition_parquet(source, samples=2000, channels=1)
-    options = RetimeOptions(source=source, output=tmp_path / "seamed.csv", stitch=False)
+    options = RetimeOptions(
+        source=source, output=tmp_path / "seamed.csv", stitch=False, method="uniform"
+    )
     # Unstitched output keeps each segment aligned but is no longer uniform,
     # so it must not silently reach stage two.
     with pytest.raises(ValueError, match="deviate from the period"):
         run_retime(options)
+
+
+def test_anchor_interpolation_variable_spacing_and_untouched_edges():
+    tick = OBSERVED_TICK_S
+    gaps = np.ones(50) * tick
+    gaps[[4, 13, 31, 42]] = 2 * tick
+    stamps = -0.002 + np.r_[0, np.cumsum(gaps)]
+    rebuilt, report = rebuild_timestamps(stamps, tick_s=tick)
+    anchors = np.array([5, 14, 32, 43])
+    assert report.anchor_indices == tuple(anchors)
+    np.testing.assert_array_equal(rebuilt[:6], stamps[:6])
+    np.testing.assert_array_equal(rebuilt[43:], stamps[43:])
+    np.testing.assert_array_equal(rebuilt[anchors], stamps[anchors])
+    for a, b in zip(anchors[:-1], anchors[1:], strict=True):
+        np.testing.assert_allclose(
+            np.diff(rebuilt[a : b + 1]), (stamps[b] - stamps[a]) / (b - a), atol=1e-15, rtol=0
+        )
+    assert report.interpolated_intervals == ((5, 14), (14, 32), (32, 43))
+    assert rebuilt[0] < 0  # no global shift even with default non_negative=True
+
+
+@pytest.mark.parametrize("jumps", [[], [4]])
+def test_insufficient_anchors_leave_all_samples_unchanged(jumps):
+    gaps = np.full(30, OBSERVED_TICK_S)
+    gaps[jumps] *= 2
+    stamps = np.r_[0, np.cumsum(gaps)]
+    rebuilt, report = rebuild_timestamps(stamps)
+    np.testing.assert_array_equal(rebuilt, stamps)
+    assert report.interpolated_intervals == ()
+
+
+def test_gap_is_not_anchor_and_not_smeared():
+    stamps = quantized_stamps(1000)
+    stamps[500:] += 0.1
+    rebuilt, report = rebuild_timestamps(stamps)
+    assert 500 not in report.anchor_indices
+    assert report.skipped_intervals
+    for a, b in report.skipped_intervals:
+        np.testing.assert_array_equal(rebuilt[a : b + 1], stamps[a : b + 1])
+    assert rebuilt[500] - rebuilt[499] == stamps[500] - stamps[499]
+
+
+def test_retime_then_offline_preserves_times_and_rejects_causal(tmp_path):
+    from emg_eeg_denoise.pipeline.replay import ReplayOptions, run_replay
+
+    source, retimed = tmp_path / "raw.csv", tmp_path / "retimed.csv"
+    original = write_acquisition_csv(source, samples=4000, channels=1)
+    run_retime(RetimeOptions(source=source, output=retimed))
+    recording = load_acquisition(retimed)
+    assert recording.timestamps[0] == original[0]
+    assert recording.timestamps[-1] == original[-1]
+    out = tmp_path / "filtered.csv"
+    result = run_replay(ReplayOptions(source=retimed, output=out))
+    assert result["resampled_segments"] == 1
+    np.testing.assert_array_equal(load_acquisition(out).timestamps, recording.timestamps)
+    assert np.isfinite(load_acquisition(out).samples).all()
+    with pytest.raises(ValueError, match="causal processing requires a uniform"):
+        run_replay(ReplayOptions(source=retimed, output=tmp_path / "causal.csv", causal=True))
+
+
+def test_offline_irregular_matches_explicit_grid_reference():
+    from emg_eeg_denoise.dsp.offline import offline_denoise
+    from emg_eeg_denoise.pipeline.replay import _denoise_arrays
+
+    t, _ = rebuild_timestamps(quantized_stamps(4000))
+    x = (np.sin(2 * np.pi * 80 * t) + 0.2 * np.sin(2 * np.pi * 50 * t))[:, None]
+    stamps, actual, valid, _, report = _denoise_arrays(
+        t, x, modality="emg", causal=False, sample_rate_hz=2000
+    )
+    grid = np.linspace(t[0], t[-1], round((t[-1] - t[0]) * 2000) + 1)
+    regular = np.interp(grid, t, x[:, 0])[:, None]
+    filtered, _ = offline_denoise(
+        regular, modality="emg", sample_rate=(len(grid) - 1) / (grid[-1] - grid[0])
+    )
+    expected = np.interp(t, grid, filtered[:, 0])
+    np.testing.assert_allclose(actual[:, 0], expected, rtol=1e-12, atol=1e-12)
+    np.testing.assert_array_equal(stamps, t)
+    assert valid.all() and report.resampled_segments == 1
+
+
+def test_offline_short_segment_is_explicitly_invalid():
+    from emg_eeg_denoise.pipeline.replay import _denoise_arrays
+
+    t = np.arange(10) / 2000
+    x = np.ones((10, 1))
+    stamps, y, valid, _, report = _denoise_arrays(
+        t, x, modality="emg", causal=False, sample_rate_hz=2000
+    )
+    np.testing.assert_array_equal(y, x)
+    np.testing.assert_array_equal(stamps, t)
+    assert not valid.any()
+    assert report.unfiltered_samples == 10 and report.valid_samples == 0

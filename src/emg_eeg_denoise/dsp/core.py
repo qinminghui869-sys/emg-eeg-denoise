@@ -8,7 +8,14 @@ from time import perf_counter
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from .filters import CausalFilterBank, Modality, modality_preset, sample_matrix, validate_channels
+from .filters import (
+    CausalFilterBank,
+    Modality,
+    ModalityPreset,
+    resolved_preset,
+    sample_matrix,
+    validate_channels,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,22 +24,28 @@ class DenoiserConfig:
 
     channels: int = 1
     modality: Modality = "emg"
+    #: Override the modality default (e.g. Neuroscan EEG at 1000 Hz).
+    sample_rate_hz: int | None = None
 
     def __post_init__(self) -> None:
         validate_channels(self.channels)
-        modality_preset(self.modality)
+        resolved_preset(self.modality, self.sample_rate_hz)
+
+    @property
+    def preset(self) -> ModalityPreset:
+        return resolved_preset(self.modality, self.sample_rate_hz)
 
     @property
     def sample_rate(self) -> int:
-        return modality_preset(self.modality).sample_rate
+        return self.preset.sample_rate
 
     @property
     def block_size(self) -> int:
-        return modality_preset(self.modality).block_size
+        return self.preset.block_size
 
     @property
     def warmup_samples(self) -> int:
-        return modality_preset(self.modality).warmup_samples
+        return self.preset.warmup_samples
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,17 +64,21 @@ class DenoisedBlock:
 
 
 class RealtimeDenoiser:
-    """Causal streaming denoiser for EMG (2 kHz) or EEG (250 Hz).
+    """Causal streaming denoiser for EMG (2 kHz) or EEG (default 250 Hz).
 
     process() accepts any positive sample count and internally consumes at most
-    one hop (EMG 20 samples / EEG 10 samples) at a time. A forward timestamp gap
-    resets state and warmup. Backward/repeated time is rejected; call reset()
-    before restarting a device's timestamp clock.
+    one hop (EMG 20 samples / EEG 10 samples at the default rates) at a time.
+    A forward timestamp gap resets state and warmup. Backward/repeated time is
+    rejected; call reset() before restarting a device's timestamp clock.
     """
 
     def __init__(self, config: DenoiserConfig | None = None) -> None:
         self._config = config or DenoiserConfig()
-        self._bank = CausalFilterBank(self.config.channels, self.config.modality)
+        self._bank = CausalFilterBank(
+            self.config.channels,
+            self.config.modality,
+            sample_rate=self.config.sample_rate,
+        )
         self.segment_id = -1
         self.reset()
 

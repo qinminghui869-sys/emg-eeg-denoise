@@ -61,6 +61,52 @@ def modality_preset(modality: Modality | str) -> ModalityPreset:
     raise ValueError("modality must be 'emg' or 'eeg'")
 
 
+def estimate_rate_hz(timestamps: ArrayLike) -> float | None:
+    """Median reciprocal gap from a timestamp vector; ``None`` if unusable."""
+    stamps = np.asarray(timestamps, dtype=np.float64).reshape(-1)
+    if stamps.size < 2 or not np.isfinite(stamps).all():
+        return None
+    gaps = np.diff(stamps)
+    positive = gaps[gaps > 0.0]
+    if positive.size == 0:
+        return None
+    median_dt = float(np.median(positive))
+    if median_dt <= 0.0:
+        return None
+    return 1.0 / median_dt
+
+
+def _assert_filter_rate(modality: Modality, sample_rate: int) -> None:
+    """Reject rates that cannot host the fixed cutoff frequencies."""
+    if sample_rate < 1:
+        raise ValueError("sample rate must be a positive integer")
+    if modality == "emg":
+        if sample_rate <= 2 * 450:
+            raise ValueError(f"EMG sample rate {sample_rate} Hz is too low for a 450 Hz lowpass")
+        # Comb delay is 40 samples ≈ 20 ms only at 2 kHz.
+        if abs(sample_rate - FS) / FS > 0.05:
+            raise ValueError(
+                f"EMG denoise expects ~{FS} Hz (comb delay is fixed); received {sample_rate} Hz"
+            )
+        return
+    if sample_rate <= 2 * 50:
+        raise ValueError(f"EEG sample rate {sample_rate} Hz is too low for a 50 Hz lowpass/notch")
+
+
+def resolved_preset(
+    modality: Modality | str, sample_rate: float | int | None = None
+) -> ModalityPreset:
+    """Preset with optional sample-rate override (scales block size and 1 s warmup)."""
+    base = modality_preset(modality)
+    if sample_rate is None:
+        return base
+    fs = int(round(float(sample_rate)))
+    _assert_filter_rate(base.modality, fs)
+    hop_s = base.block_size / base.sample_rate
+    block = max(1, int(round(hop_s * fs)))
+    return ModalityPreset(base.modality, fs, block, fs)
+
+
 def infer_modality(path: str | object) -> Modality:
     """Guess modality from a file name; anything without ``eeg`` defaults to EMG."""
     name = str(getattr(path, "name", path)).lower()
@@ -168,9 +214,15 @@ class IIRNotch:
 class CausalFilterBank:
     """Modality-specific causal bandpass followed by comb (EMG) or notch (EEG)."""
 
-    def __init__(self, channels: int, modality: Modality | str = "emg") -> None:
+    def __init__(
+        self,
+        channels: int,
+        modality: Modality | str = "emg",
+        *,
+        sample_rate: float | int | None = None,
+    ) -> None:
         self.channels = validate_channels(channels)
-        self.preset = modality_preset(modality)
+        self.preset = resolved_preset(modality, sample_rate)
         self.modality = self.preset.modality
         self.sample_rate = self.preset.sample_rate
         if self.modality == "emg":

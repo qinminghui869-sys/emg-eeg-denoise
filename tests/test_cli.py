@@ -29,10 +29,10 @@ def test_csv_stream_preserves_epoch_time_partial_tail_gap_and_reports(tmp_path):
     assert main(["process", "--sidecar", "--json", str(source), "--output", str(output)]) == 0
     data = np.loadtxt(output, delimiter=",", skiprows=1)
     np.testing.assert_array_equal(data[:, 0], t)
-    assert data.shape == (5003, 4)
-    assert data[2501, 3] == 1
+    assert data.shape == (5003, 2)
     report = json.loads(Path(str(output) + ".report.json").read_text())
     assert report["input_samples"] == report["output_samples"] == 5003
+    assert report["segments"] == 2
     assert report["modality"] == "emg"
     assert report["observed_end_to_end_ms"] is None
 
@@ -61,6 +61,34 @@ def test_eeg_process_uses_eeg_chain(tmp_path):
     assert report["modality"] == "eeg"
     assert report["sample_rate_hz"] == 250
     assert report["input_samples"] == report["output_samples"] == 800
+
+
+def test_eeg_process_accepts_neuroscan_1000hz(tmp_path):
+    t = np.arange(2000) / 1000.0
+    x = np.sin(2 * np.pi * 50 * t)
+    source, output = tmp_path / "observation.eeg.csv", tmp_path / "out.csv"
+    write_csv(source, t, x, header="timestamp,Fp1")
+    assert (
+        main(
+            [
+                "process",
+                "--sidecar",
+                "--json",
+                "--rate",
+                "1000",
+                str(source),
+                "--output",
+                str(output),
+                "--modality",
+                "eeg",
+            ]
+        )
+        == 0
+    )
+    report = json.loads(Path(str(output) + ".report.json").read_text())
+    assert report["sample_rate_hz"] == 1000
+    assert report["segments"] == 1
+    assert report["input_samples"] == report["output_samples"] == 2000
 
 
 def test_csv_does_not_overwrite_input(tmp_path):
@@ -95,9 +123,12 @@ def test_process_parquet_defaults_to_sibling_denoised_output(tmp_path):
     assert report["output"] == str(output)
     assert report["input_samples"] == report["output_samples"] == 4000
     rebuilt = pq.read_table(output)
-    assert "valid" in rebuilt.column_names
-    assert "segment_id" in rebuilt.column_names
+    assert "valid" not in rebuilt.column_names
+    assert "segment_id" not in rebuilt.column_names
     assert "dim_0" in rebuilt.column_names
+    assert "episode_index" in rebuilt.column_names
+    mask = pq.read_table(Path(f"{output}.mask.parquet"))
+    assert set(mask.column_names) >= {"timestamp", "sample_index", "valid", "segment_id"}
 
 
 def test_python_module_entrypoint_uses_the_same_cli(tmp_path, monkeypatch):

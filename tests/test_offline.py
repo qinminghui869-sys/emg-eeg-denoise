@@ -33,3 +33,10 @@ def test_offline_eeg_runs_and_keeps_shape():
     assert y.shape == x.shape
     assert info["method"] == "offline_filtfilt"
     assert any("陷波" in stage for stage in info["stages"])
+
+
+def test_offline_eeg_at_1000hz():
+    x = np.random.default_rng(2).normal(size=(4000, 4))
+    y, info = offline_denoise(x, modality="eeg", sample_rate=1000)
+    assert y.shape == x.shape
+    assert info["fs"] == 1000.0

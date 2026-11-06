@@ -80,6 +80,25 @@ def test_cli_meta_backfill(tmp_path, capsys):
 def test_register_denoised_feature(tmp_path):
     session = _session_tree(tmp_path, samples=800)
     source = next(session.rglob("observation.left_wrist_emg.parquet"))
+    (session / "meta" / "episodes_stats.jsonl").write_text(
+        json.dumps(
+            {
+                "episode_index": 0,
+                "stats": {
+                    "observation.left_wrist_emg": {
+                        "min": [0.0] * 8,
+                        "max": [1.0] * 8,
+                        "mean": [0.5] * 8,
+                        "std": [0.1] * 8,
+                        "count": [800],
+                    }
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    samples = [[float(i), float(-i)] + [0.0] * 6 for i in range(10)]
     register_recording_meta(
         source,
         denoise_payload={
@@ -91,9 +110,17 @@ def test_register_denoised_feature(tmp_path):
             "segments": 1,
             "output": str(source.with_name("observation.left_wrist_emg.denoised.parquet")),
         },
+        samples=samples,
+        episode_index=0,
     )
     info = json.loads((session / "meta" / "info.json").read_text())
     denoised = info["features"]["observation.left_wrist_emg.denoised"]
     assert denoised["source"] == "observation.left_wrist_emg"
     assert denoised["pipeline"]["modality"] == "emg"
     assert denoised["shape"] == [8]
+    stats_line = json.loads((session / "meta" / "episodes_stats.jsonl").read_text().splitlines()[0])
+    denoised_stats = stats_line["stats"]["observation.left_wrist_emg.denoised"]
+    assert denoised_stats["count"] == [10]
+    assert denoised_stats["min"][0] == 0.0
+    assert denoised_stats["max"][0] == 9.0
+    assert "observation.left_wrist_emg" in stats_line["stats"]

@@ -7,6 +7,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from ..io import dump_json
 
 TOOL_NAME = "emg-eeg-denoise"
@@ -50,6 +52,8 @@ def timebase_patch(payload: dict[str, Any]) -> dict[str, Any]:
             "tool_version": tool_version(),
             "backup": Path(backup).name if backup else None,
             "measured_rate_hz": payload.get("measured_rate_hz"),
+            "method": payload.get("method", "uniform"),
+            "edges_unchanged": payload.get("edges_unchanged", False),
             "tick_us": payload.get("tick_us"),
             "resync_segments": payload.get("resync_segments"),
             "max_offset_us": payload.get("max_offset_us"),
@@ -89,8 +93,11 @@ def denoised_feature(
             "samples": payload.get("input_samples"),
             "valid_samples": payload.get("valid_samples"),
             "segments": payload.get("segments"),
+            "resampled_segments": payload.get("resampled_segments", 0),
+            "unfiltered_samples": payload.get("unfiltered_samples", 0),
             "warmup_s": 1.0 if payload.get("method") == "causal_stream" else 0.0,
             "output": Path(payload["output"]).name if payload.get("output") else None,
+            "mask": Path(payload["mask"]).name if payload.get("mask") else None,
         },
     }
     return entry
@@ -125,11 +132,86 @@ def update_info_features(info_path: Path, patches: dict[str, dict[str, Any]]) ->
     return info_path
 
 
+def channel_stats(samples: Any) -> dict[str, Any]:
+    """LeRobot-style per-channel ``min/max/mean/std/count`` for ``episodes_stats``."""
+    x = np.asarray(samples, dtype=np.float64)
+    if x.ndim == 1:
+        x = x[:, None]
+    if x.size == 0:
+        width = int(x.shape[1]) if x.ndim == 2 else 0
+        empty = [0.0] * width
+        return {"min": empty, "max": empty, "mean": empty, "std": empty, "count": [0]}
+    return {
+        "min": x.min(axis=0).tolist(),
+        "max": x.max(axis=0).tolist(),
+        "mean": x.mean(axis=0).tolist(),
+        "std": x.std(axis=0, ddof=0).tolist(),
+        "count": [int(x.shape[0])],
+    }
+
+
+def _episode_ids(episode_index: Any | None) -> set[int] | None:
+    if episode_index is None:
+        return None
+    values = np.asarray(episode_index).reshape(-1)
+    if values.size == 0:
+        return None
+    return {int(value) for value in values}
+
+
+def update_episodes_stats(
+    session_root: Path,
+    feature_key: str,
+    stats: dict[str, Any],
+    *,
+    episode_index: Any | None = None,
+) -> Path | None:
+    """Write computed denoise stats into ``meta/episodes_stats.jsonl``."""
+    stats_path = session_root / "meta" / "episodes_stats.jsonl"
+    target_episodes = _episode_ids(episode_index)
+    if not stats_path.is_file():
+        episode = sorted(target_episodes)[0] if target_episodes else 0
+        payload = {"episode_index": episode, "stats": {feature_key: stats}}
+        with stats_path.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, allow_nan=False) + "\n")
+        return stats_path
+
+    lines = [line for line in stats_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    updated: list[dict[str, Any]] = []
+    matched = False
+    for line in lines:
+        entry = json.loads(line)
+        if not isinstance(entry, dict):
+            raise ValueError(f"episodes_stats entries must be objects: {stats_path}")
+        entry_episode = entry.get("episode_index")
+        if target_episodes is None or (
+            isinstance(entry_episode, (int, np.integer)) and int(entry_episode) in target_episodes
+        ):
+            bucket = entry.setdefault("stats", {})
+            if not isinstance(bucket, dict):
+                raise ValueError(f"episodes_stats stats must be an object: {stats_path}")
+            bucket[feature_key] = stats
+            matched = True
+        updated.append(entry)
+
+    if not matched:
+        fallback_episode = sorted(target_episodes)[0] if target_episodes else 0
+        updated.append({"episode_index": fallback_episode, "stats": {feature_key: stats}})
+
+    text = "".join(
+        json.dumps(entry, ensure_ascii=False, allow_nan=False) + "\n" for entry in updated
+    )
+    stats_path.write_text(text, encoding="utf-8")
+    return stats_path
+
+
 def register_recording_meta(
     source: str | Path,
     *,
     retime_payload: dict[str, Any] | None = None,
     denoise_payload: dict[str, Any] | None = None,
+    samples: Any | None = None,
+    episode_index: Any | None = None,
 ) -> Path | None:
     """Update the enclosing session ``meta/info.json`` when one exists."""
     source_path = Path(source)
@@ -149,15 +231,21 @@ def register_recording_meta(
         template = (info.get("features") or {}).get(base_key)
         if not isinstance(template, dict):
             template = None
-        patches[f"{base_key}.denoised"] = denoised_feature(
-            base_key, denoise_payload, template=template
-        )
+        denoised_key = f"{base_key}.denoised"
+        patches[denoised_key] = denoised_feature(base_key, denoise_payload, template=template)
+        stats = denoise_payload.get("stats")
+        if stats is None and samples is not None:
+            stats = channel_stats(samples)
+        if isinstance(stats, dict):
+            update_episodes_stats(root, denoised_key, stats, episode_index=episode_index)
     if not patches:
         return None
     return update_info_features(info_path, patches)
 
 
-def backfill_session_meta(session_root: str | Path, *, remove_sidecars: bool = True) -> dict[str, Any]:
+def backfill_session_meta(
+    session_root: str | Path, *, remove_sidecars: bool = True
+) -> dict[str, Any]:
     """Rebuild ``info.json`` patches from existing sidecar reports, then delete them."""
     root = Path(session_root)
     info_path = root / "meta" / "info.json"

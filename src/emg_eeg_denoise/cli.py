@@ -15,6 +15,8 @@ from .pipeline.batch import BatchOptions, run_batch
 from .pipeline.meta import backfill_session_meta
 from .pipeline.replay import ReplayOptions, default_process_output, run_replay
 from .pipeline.retime import RetimeOptions, run_retime
+from .qc import QcOptions, run_qc
+from .qc.report import format_summary
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     retime = sub.add_parser(
         "retime",
         parents=[common],
-        help="阶段一：重建采集时间戳为均匀时基（CSV，或 parquet 就地写回）",
+        help="阶段一：EMG 双锚点插值，未覆盖首尾保持原样",
     )
     retime.add_argument("input", type=Path, help="采集parquet或CSV；需含timestamp列")
     retime.add_argument("--output", type=Path, help="输出路径；--inplace 时省略")
@@ -54,11 +56,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--modality",
         choices=("emg", "eeg", "auto"),
         default="auto",
-        help="决定默认采样率；auto 从文件名推断（含 eeg → 250 Hz，否则 2000 Hz）",
+        help="决定默认采样率；auto 从文件名推断（含 eeg → 250 Hz 默认，否则 2000 Hz；可用 --rate 覆盖）",
     )
     retime.add_argument("--rate", type=float, help="真实采样率Hz；覆盖 modality 默认值")
+    retime.add_argument(
+        "--method",
+        choices=("anchor_interpolation", "uniform"),
+        default=None,
+        help="默认双锚点插值，首尾保留；uniform 为旧固定周期模式",
+    )
     retime.add_argument("--tick-us", type=float, help="时钟分辨率us；默认由数据估计")
-    retime.add_argument("--allow-negative", action="store_true", help="不平移首点至零")
+    retime.add_argument(
+        "--allow-negative", action="store_true", help="仅 uniform 模式：不平移首点至零"
+    )
     batch = sub.add_parser(
         "batch",
         parents=[common],
@@ -79,7 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     batch.add_argument("--rate", type=float, help="真实采样率Hz；覆盖 modality 默认值")
     batch.add_argument("--tick-us", type=float, help="时钟分辨率us；默认逐文件估计")
-    batch.add_argument("--allow-negative", action="store_true", help="不平移首点至零")
+    batch.add_argument(
+        "--allow-negative", action="store_true", help="仅 uniform 模式：不平移首点至零"
+    )
     batch.add_argument(
         "--denoise",
         action="store_true",
@@ -110,9 +122,9 @@ def build_parser() -> argparse.ArgumentParser:
     replay = sub.add_parser(
         "process",
         parents=[common],
-        help="阶段二：离线 filtfilt 去噪（与 Viewer 同款）；输入均匀时基 CSV/parquet",
+        help="阶段二：离线 filtfilt 去噪（与 Viewer 同款）；离线 EMG 接受校正点均分后的时基，因果模式要求均匀时基",
     )
-    replay.add_argument("input", type=Path, help="均匀时基 CSV 或 parquet（含 timestamp 与通道）")
+    replay.add_argument("input", type=Path, help="CSV 或 parquet（含 timestamp 与通道）")
     replay.add_argument(
         "--output",
         type=Path,
@@ -125,10 +137,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="emg=20/450/梳状50；eeg=0.5/50/陷波50；auto 从文件名推断",
     )
     replay.add_argument(
+        "--rate",
+        type=float,
+        help="真实采样率Hz；默认读 meta/info.json fps，否则测时间戳；EEG 预设 250，Neuroscan 常用 1000",
+    )
+    replay.add_argument(
         "--causal",
         action="store_true",
         help="改用流式因果滤波（默认可视化同款离线 filtfilt，减轻首尾振铃）",
     )
+    qc = sub.add_parser("qc", help="只读 EMG 信号质量与去噪完整性检查")
+    qc.add_argument("inputs", nargs="+", help="文件、episode/会话目录或 glob")
+    qc.add_argument("--output-dir", type=Path)
+    qc.add_argument("--rate", type=float)
+    qc.add_argument("--window-s", type=float, default=2.0)
+    qc.add_argument("--step-s", type=float, default=1.0)
+    qc.add_argument("--config", type=Path)
+    qc.add_argument("--require-denoised", action="store_true")
+    qc.add_argument("--strict", action="store_true")
+    qc.add_argument("--json", action="store_true")
     return parser
 
 
@@ -262,6 +289,8 @@ def format_payload(command: str, payload: dict[str, Any]) -> str:
     """Render a human-readable summary for stdout."""
     if command == "batch":
         return _format_batch(payload)
+    if command == "qc":
+        return format_summary(payload)
     if command == "retime":
         return _format_retime(payload)
     if command == "meta-backfill":
@@ -270,6 +299,20 @@ def format_payload(command: str, payload: dict[str, Any]) -> str:
 
 
 def _execute(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
+    if args.command == "qc":
+        payload = run_qc(
+            QcOptions(
+                inputs=tuple(args.inputs),
+                output_dir=args.output_dir,
+                rate=args.rate,
+                window_s=args.window_s,
+                step_s=args.step_s,
+                config=args.config,
+                require_denoised=args.require_denoised,
+                strict=args.strict,
+            )
+        )
+        return payload, int(payload["exit_code"])
     if args.command == "retime":
         if not args.inplace and args.output is None:
             raise ValueError("--output is required unless --inplace is set")
@@ -278,6 +321,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         payload = run_retime(
             RetimeOptions(
                 source=args.input,
+                method=args.method or ("anchor_interpolation" if modality == "emg" else "uniform"),
                 output=args.output,
                 rate_hz=rate,
                 tick_us=args.tick_us,
@@ -326,6 +370,7 @@ def _execute(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             source=args.input,
             output=output,
             modality=process_modality,
+            sample_rate_hz=args.rate,
             sidecar=args.sidecar,
             update_meta=not args.no_update_meta,
             causal=args.causal,

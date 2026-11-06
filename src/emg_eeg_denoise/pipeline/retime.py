@@ -1,7 +1,7 @@
 """Application service for stage one: rebuild a recording's time axis.
 
 Reads an acquisition parquet (or CSV), replaces the tick-quantized timestamps
-with a uniform axis, and writes either:
+with endpoint-preserving, piecewise interpolated intervals, and writes either:
 
 - a ``timestamp,channel...`` CSV or parquet for stage two (``emg-eeg-denoise process``), or
 - a parquet that keeps the acquisition schema (``--inplace`` or ``.parquet`` output).
@@ -30,7 +30,18 @@ TIMESTAMP_COLUMN = "timestamp"
 CHANNEL_PREFIX = "dim_"
 
 #: Columns carried by acquisition parquet that are not signal channels.
-METADATA_COLUMNS = frozenset({TIMESTAMP_COLUMN, "episode_index", "frame_index", "index"})
+#: ``valid`` / ``segment_id`` are reserved denoise QC columns (legacy outputs);
+#: never treat them as signal channels for upstream LeRobot readers.
+METADATA_COLUMNS = frozenset(
+    {
+        TIMESTAMP_COLUMN,
+        "episode_index",
+        "frame_index",
+        "index",
+        "valid",
+        "segment_id",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,10 +51,10 @@ class RetimeOptions:
     source: Path
     output: Path | None = None
     rate_hz: float = float(FS)
+    method: str = "anchor_interpolation"
     tick_us: float | None = None
     non_negative: bool = True
-    #: Segment-local anchoring keeps samples nearer their original stamps but
-    #: leaves seams, so the result cannot satisfy stage two. Diagnostics only.
+    #: Legacy uniform mode only: stitch fixed-period centroid segments.
     stitch: bool = True
     #: Rename ``source`` to ``source.bak`` and write the rebuild as ``source``.
     inplace: bool = False
@@ -298,11 +309,13 @@ def run_retime(options: RetimeOptions) -> dict[str, Any]:
     timestamps, report = rebuild_timestamps(
         acquisition.timestamps,
         period_s=options.period_s,
+        method=options.method,
         tick_s=None if options.tick_us is None else options.tick_us * 1e-6,
         stitch=options.stitch,
         non_negative=options.non_negative,
     )
-    _verify_uniform(timestamps, options.period_s)
+    if options.method == "uniform":
+        _verify_uniform(timestamps, options.period_s)
 
     destination = options.destination
     if options.inplace:
@@ -361,11 +374,16 @@ def _payload(
         "max_offset_us": report.max_offset_s * 1e6,
         "first_timestamp_s": report.first_timestamp_s,
         "last_timestamp_s": report.last_timestamp_s,
-        "stitched": options.stitch,
+        "method": report.method,
+        "anchor_indices": list(report.anchor_indices),
+        "interpolated_intervals": list(report.interpolated_intervals),
+        "skipped_intervals": list(report.skipped_intervals),
+        "edges_unchanged": report.method == "anchor_interpolation",
+        "stitched": options.stitch if report.method == "uniform" else False,
         "inplace": options.inplace,
         "warnings": list(report.warnings()),
         "note": (
             "Sample values are unchanged; only the time axis is rebuilt. "
-            "Stage two (process) requires this uniform axis."
+            "Only bounded anchor intervals are interpolated; uncovered edges remain unchanged."
         ),
     }

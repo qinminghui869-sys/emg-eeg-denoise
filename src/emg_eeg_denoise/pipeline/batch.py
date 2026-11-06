@@ -26,7 +26,15 @@ from .replay import ReplayOptions, default_process_output, run_replay
 from .retime import RetimeOptions, run_retime
 
 #: Suffixes excluded from inputs so reruns never consume their own outputs.
-DERIVED_SUFFIXES = (".timebase.json", ".report.json", ".bak", ".denoised.parquet", ".denoised.pq")
+DERIVED_SUFFIXES = (
+    ".timebase.json",
+    ".report.json",
+    ".mask.parquet",
+    ".bak",
+    ".denoised.parquet",
+    ".denoised.pq",
+    ".denoised.csv",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +139,7 @@ def _process_one_mirrored(source: Path, target: Path, options: BatchOptions) -> 
 
     stage_one = run_retime(
         RetimeOptions(
+            method="anchor_interpolation" if modality == "emg" else "uniform",
             source=source,
             output=retimed,
             rate_hz=_rate_for(source, options),
@@ -168,6 +177,7 @@ def _process_one_mirrored(source: Path, target: Path, options: BatchOptions) -> 
             source=retimed,
             output=denoised,
             modality=modality,
+            sample_rate_hz=options.rate_hz,
             sidecar=options.sidecar,
             update_meta=options.update_meta,
             causal=options.causal,
@@ -192,6 +202,7 @@ def _process_one_inplace(source: Path, options: BatchOptions) -> dict[str, Any]:
     modality = _modality_for(source, options)
     stage_one = run_retime(
         RetimeOptions(
+            method="anchor_interpolation" if modality == "emg" else "uniform",
             source=source,
             inplace=True,
             rate_hz=_rate_for(source, options),
@@ -227,6 +238,7 @@ def _process_one_inplace(source: Path, options: BatchOptions) -> dict[str, Any]:
             source=source,
             output=denoised,
             modality=modality,
+            sample_rate_hz=options.rate_hz,
             sidecar=options.sidecar,
             update_meta=options.update_meta,
             causal=options.causal,

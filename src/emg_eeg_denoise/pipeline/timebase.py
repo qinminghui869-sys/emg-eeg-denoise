@@ -1,26 +1,4 @@
-"""Reconstruct a uniform sample clock from tick-quantized acquisition timestamps.
-
-Acquisition hardware stamps samples with a clock whose resolution (one tick) is
-finer than, but not a divisor of, the true sampling period. Each sample accrues
-``period - tick`` of error; once that reaches a whole tick the reported stamp
-jumps two ticks to resynchronize. A 2 kHz sEMG stream on a 451.088 us tick
-therefore reports only four distinct gaps -- 451.088, 450.850 (one tick, two
-float32 neighbours) and 902.176, 901.937 (two ticks) -- while averaging exactly
-500 us.
-
-The raw stamps are consequently unusable downstream: :func:`emg_eeg_denoise.io.load_recording`
-requires contiguous uniform stamps, and replay treats any off-period gap as a
-segment break, which would shatter one recording into thousands of fragments and
-reset the streaming filter state at each one.
-
-This module discards the per-sample stamp values, keeps them only to fix a time
-origin, and rebuilds the axis from the sample ordinal::
-
-    t[i] = offset + i * period
-
-Resync points (gaps of two or more ticks) bound the segments used to anchor
-``offset``, so a quantization artefact is never mistaken for a real dropout.
-"""
+"""Rebuild only intervals bounded by two tick-jump anchors; preserve uncovered edges."""
 
 from __future__ import annotations
 
@@ -34,7 +12,7 @@ from .._typing import FloatArray, IntArray
 #: Clock resolution observed on the BCIGO wrist-EMG recorders, in seconds.
 OBSERVED_TICK_S: Final = 451.08795166015625e-6
 
-#: Gaps at or above this many ticks mark a hardware resync, not a dropped sample.
+#: Gaps near this many ticks are candidate anchors, not proof of synchronization.
 RESYNC_TICKS: Final = 2
 
 
@@ -53,6 +31,11 @@ class TimebaseReport:
     max_offset_s: float
     first_timestamp_s: float
     last_timestamp_s: float
+
+    method: str = "anchor_interpolation"
+    anchor_indices: tuple[int, ...] = ()
+    interpolated_intervals: tuple[tuple[int, int], ...] = ()
+    skipped_intervals: tuple[tuple[int, int], ...] = ()
 
     @property
     def measured_rate_hz(self) -> float:
@@ -74,6 +57,10 @@ class TimebaseReport:
             )
         if self.first_timestamp_s < 0.0:
             issues.append(f"first timestamp is negative ({self.first_timestamp_s * 1e6:.3f} us)")
+        if self.skipped_intervals:
+            issues.append(
+                f"{len(self.skipped_intervals)} anomalous anchor intervals left unchanged"
+            )
         return tuple(issues)
 
 
@@ -97,12 +84,12 @@ def estimate_tick(timestamps: FloatArray) -> float:
 def find_resync_points(timestamps: FloatArray, tick_s: float) -> IntArray:
     """Locate samples whose reported gap spans two or more ticks.
 
-    These are the clock's own correction points. They are the only places where
-    the quantization error resets, so they bound the anchoring segments.
+    These are candidate anchors, not independently verified synchronization events.
+    Larger gaps are not anchors.
     """
     if tick_s <= 0.0:
         raise ValueError("tick must be positive")
-    jumps = np.rint(np.diff(timestamps) / tick_s) >= RESYNC_TICKS
+    jumps = np.abs(np.diff(timestamps) / tick_s - RESYNC_TICKS) <= 0.05
     return (np.flatnonzero(jumps) + 1).astype(np.int64)
 
 
@@ -119,24 +106,13 @@ def rebuild_timestamps(
     tick_s: float | None = None,
     stitch: bool = True,
     non_negative: bool = True,
+    method: str = "anchor_interpolation",
 ) -> tuple[FloatArray, TimebaseReport]:
-    """Rebuild a uniform time axis from tick-quantized stamps.
+    """Interpolate between neighboring two-tick anchors, preserving endpoints.
 
-    Args:
-        timestamps: Original stamps in seconds, strictly increasing.
-        period_s: True sampling period. The default matches the 2 kHz chain.
-        tick_s: Clock resolution; estimated from the data when omitted.
-        stitch: Continue each segment from the previous one so every gap equals
-            ``period_s`` exactly. Offsets from the original stamps then accumulate
-            across segments. When false, each segment is anchored on its own
-            centroid, which keeps every sample within half a tick of its original
-            stamp but leaves a seam at each segment boundary.
-        non_negative: Shift the axis so it starts at or after zero. Centroid
-            anchoring can otherwise extrapolate the first segment below zero.
-
-    Returns:
-        The rebuilt axis and a :class:`TimebaseReport`. Inspect
-        :meth:`TimebaseReport.warnings` before trusting the result.
+    Nominal period only guards anomalies (>20% local-period deviation or a
+    gap >3 nominal periods). Unbounded edges and rejected intervals are copied.
+    ``stitch``/``non_negative`` apply only to explicit legacy ``uniform`` mode.
     """
     stamps = np.asarray(timestamps, dtype=np.float64)
     if stamps.ndim != 1:
@@ -147,33 +123,55 @@ def rebuild_timestamps(
         raise ValueError("timestamps must be finite")
     if np.any(np.diff(stamps) <= 0.0):
         raise ValueError("timestamps must be strictly increasing")
-    if period_s <= 0.0:
+    if not np.isfinite(period_s) or period_s <= 0.0:
         raise ValueError("period must be positive")
 
     tick = estimate_tick(stamps) if tick_s is None else float(tick_s)
-    if tick <= 0.0:
+    if not np.isfinite(tick) or tick <= 0.0:
         raise ValueError("tick must be positive")
 
     ordinal = np.arange(stamps.size, dtype=np.float64)
     resync = find_resync_points(stamps, tick)
     bounds = _segment_bounds(stamps.size, resync)
 
-    rebuilt = np.empty_like(stamps)
-    for index, (start, stop) in enumerate(bounds):
-        if stitch and index > 0:
-            # Continue from the previous sample, keeping every gap at one period.
-            offset = rebuilt[start - 1] + period_s - ordinal[start] * period_s
-        else:
-            # Least-squares offset for a line of fixed slope: the mean residual.
-            offset = float(np.mean(stamps[start:stop] - period_s * ordinal[start:stop]))
-        rebuilt[start:stop] = offset + period_s * ordinal[start:stop]
+    accepted: list[tuple[int, int]] = []
+    skipped: list[tuple[int, int]] = []
+    if method == "anchor_interpolation":
+        rebuilt = stamps.copy()
+        for left, right in zip(resync[:-1], resync[1:], strict=True):
+            a, b = int(left), int(right)
+            local_period = (stamps[b] - stamps[a]) / (b - a)
+            if abs(local_period / period_s - 1) > 0.20 or np.any(
+                np.diff(stamps[a : b + 1]) > 3 * period_s
+            ):
+                skipped.append((a, b))
+                continue
+            rebuilt[a + 1 : b] = stamps[a] + np.arange(1, b - a) * local_period
+            accepted.append((a, b))
+    elif method == "uniform":
+        rebuilt = np.empty_like(stamps)
+        for index, (start, stop) in enumerate(bounds):
+            if stitch and index > 0:
+                # Continue from the previous sample, keeping every gap at one period.
+                offset = rebuilt[start - 1] + period_s - ordinal[start] * period_s
+            else:
+                # Least-squares offset for a line of fixed slope: the mean residual.
+                offset = float(np.mean(stamps[start:stop] - period_s * ordinal[start:stop]))
+            rebuilt[start:stop] = offset + period_s * ordinal[start:stop]
 
-    if non_negative and rebuilt[0] < 0.0:
-        rebuilt -= rebuilt[0]
+        if non_negative and rebuilt[0] < 0.0:
+            rebuilt -= rebuilt[0]
+
+    else:
+        raise ValueError("unknown timebase method")
 
     lengths = [stop - start for start, stop in bounds]
     drift = period_s - tick
     report = TimebaseReport(
+        method=method,
+        anchor_indices=tuple(int(i) for i in resync),
+        interpolated_intervals=tuple(accepted),
+        skipped_intervals=tuple(skipped),
         samples=int(stamps.size),
         tick_s=tick,
         period_s=period_s,

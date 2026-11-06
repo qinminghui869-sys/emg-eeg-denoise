@@ -17,13 +17,12 @@ from .filters import (
     COMB_BANDWIDTH,
     EEG_NOTCH_HZ,
     EEG_NOTCH_Q,
-    FS,
     Modality,
     comb_coefficients,
     eeg_bandpass_sos,
     eeg_notch_ba,
     emg_bandpass_sos,
-    modality_preset,
+    resolved_preset,
     sample_matrix,
 )
 
@@ -210,8 +209,8 @@ def offline_denoise(
     sample_rate: float | None = None,
 ) -> tuple[FloatArray, dict[str, Any]]:
     """Apply the viewer-style offline chain; returns ``(samples, diagnostics)``."""
-    preset = modality_preset(modality)
-    fs = float(sample_rate if sample_rate is not None else preset.sample_rate)
+    preset = resolved_preset(modality, sample_rate)
+    fs = float(preset.sample_rate)
     x = sample_matrix(samples)
     n = x.shape[0]
     stages: list[str] = []
@@ -220,7 +219,7 @@ def offline_denoise(
 
     padded, used_mirror = mirror_pad(x)
     if preset.modality == "emg":
-        sos = emg_bandpass_sos(int(fs) if fs == int(fs) else FS)
+        sos = emg_bandpass_sos(int(round(fs)))
         stages.extend(["高通2@20Hz", "低通4@450Hz"])
         y = signal.sosfiltfilt(sos, padded, axis=0)
     else:
